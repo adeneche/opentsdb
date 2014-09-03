@@ -18,11 +18,17 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+
 /**
  *
  * @author jscott
  */
 public class CachedBatches {
+
+	  private static final Logger LOG = LoggerFactory.getLogger(CachedBatches.class);
 
 	private static final Map<String, Batch> batches = new ConcurrentHashMap<String, Batch>();
 	private static final Timer TIMER = new Timer(true);
@@ -38,7 +44,8 @@ public class CachedBatches {
 	 */
 	static {
 		final long delay = 1000 * 60;
-		TIMER.schedule(TIMER_TASK, delay);
+		//TIMER.schedule(TIMER_TASK, delay);
+		TIMER.scheduleAtFixedRate(TIMER_TASK, delay, delay);
 	}
 
 	/**
@@ -141,9 +148,16 @@ public class CachedBatches {
 	 * updated that often this will cause them to persist near hour boundaries.
 	 */
 	private static void rebaseBatches() {
+		LOG.info("rebase Batches");
 		long base = baseTime(System.currentTimeMillis());
 		for (Map.Entry<String, Batch> entry : batches.entrySet()) {
 			entry.getValue().persistIfNecessary(base);
+		}
+	}
+	
+	public static void shutdown() {
+		for (Map.Entry<String, Batch> entry : batches.entrySet()) {
+			entry.getValue().dataPoints.persist();
 		}
 	}
 

@@ -32,6 +32,8 @@ dist_noinst_DATA = pom.xml.in build-aux/rpm/opentsdb.conf \
 tsdb_SRC := \
 	src/core/Aggregator.java	\
 	src/core/Aggregators.java	\
+	src/core/BatchedDataPoints.java \
+	src/core/CachedBatches.java \
 	src/core/CompactionQueue.java	\
 	src/core/Const.java	\
 	src/core/DataPoint.java	\
@@ -67,10 +69,12 @@ tsdb_SRC := \
 	src/tools/CliQuery.java	\
 	src/tools/DumpSeries.java	\
 	src/tools/Fsck.java	\
+	src/tools/GenerateData.java \
 	src/tools/MetaPurge.java	\
 	src/tools/MetaSync.java	\
 	src/tools/TSDMain.java	\
 	src/tools/TextImporter.java	\
+	src/tools/TextImporter2.java	\
 	src/tools/TreeSync.java	\
 	src/tools/UidManager.java	\
 	src/tree/Branch.java	\
@@ -80,6 +84,7 @@ tsdb_SRC := \
 	src/tree/TreeRule.java	\
 	src/tsd/AnnotationRpc.java	\
 	src/tsd/BadRequestException.java	\
+	src/tsd/BatchDataPointRpc.java \
 	src/tsd/ConnectionManager.java	\
 	src/tsd/GnuplotException.java	\
 	src/tsd/GraphHandler.java	\

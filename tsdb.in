@@ -73,6 +73,12 @@ case $1 in
   (import)
     MAINCLASS=TextImporter
     ;;
+  (import2)
+    MAINCLASS=TextImporter2
+    ;;
+  (generate)
+    MAINCLASS=GenerateData
+    ;;
   (mkmetric)
     shift
     set uid assign metrics "$@"
