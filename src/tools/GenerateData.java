@@ -16,12 +16,11 @@ import org.slf4j.LoggerFactory;
 public class GenerateData {
 	private static final Logger LOG = LoggerFactory.getLogger(GenerateData.class);
 
-	private static final int RANDOM_RANGE = 101;
-	private static final int RANDOM_GAP = 50;
-	private static final String GENERIC_TAG = "x=y";
+//	private static final int RANDOM_RANGE = 101;
+//	private static final int RANDOM_GAP = 50;
 
 
-	/** Prints usage and exits with the given retval.  */
+	/** Prints usage and exits.  */
 	static void usage(final ArgP argp) {
 	  System.err.println("Usage: generate --metric=NAME --year=YYY --num=NUM_YEARS [--compress] [--millis]");
 	  System.err.print(argp.usage());
@@ -60,12 +59,13 @@ public class GenerateData {
 	}
 	
 	public static void generateYearlyFiles(boolean useCompression, boolean useMillis, String metricName, final int startYear, final int totalYears, final Random rand) throws IOException {
-		Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+		//TODO add timezone (--tz) param to argp
+		Calendar cal = Calendar.getInstance(); // use local timezone
 		cal.set(startYear, 0, 1, 0, 0, 0);
 
 		String extension = useCompression ? ".tsd.gz" : ".tsd";
 		int sampleSize = useMillis ? 3600000 : 3600;
-		long value = rand.nextInt(RANDOM_RANGE) - RANDOM_GAP;
+		long value = 1; // rand.nextInt(RANDOM_RANGE) - RANDOM_GAP;
 		long count = 0;
 
 		long startTime = System.currentTimeMillis();
@@ -85,9 +85,9 @@ public class GenerateData {
 				for (int day = 0; day < 7; day++) {
 					for (int hour = 0; hour < 24; hour++) {
 						for (int i = 0; i < sampleSize; i++) {
-							writeRecord(os, metricName, time, value);
+							writeRecord(os, metricName, week, day, hour, time, value);
 							// Alter the value by a range of +/- RANDOM_GAP
-							value += rand.nextInt(RANDOM_RANGE) - RANDOM_GAP;
+							// value += rand.nextInt(RANDOM_RANGE) - RANDOM_GAP;
 							time++;
 							count++;
 						}
@@ -112,8 +112,9 @@ public class GenerateData {
 				: new BufferedOutputStream(fos);
 	}
 	
-	private static void writeRecord(OutputStream os, String metricName, long time, long value) throws IOException {
-		String record = metricName + " " + time + " " + value + " " + GENERIC_TAG + "\n";
+	private static void writeRecord(OutputStream os, String metricName, int week, int day, int hour, long time, long value) throws IOException {
+		String record = metricName + " " + time + " " + value + " " + 
+				"week=" + week + " " + "day=" + day /*+ " "+ "hour=" + hour*/ +"\n";
 		os.write(record.getBytes());
 	}
 }
