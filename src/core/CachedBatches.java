@@ -44,8 +44,7 @@ public class CachedBatches {
 	 */
 	static {
 		final long delay = 1000 * 60;
-		//TIMER.schedule(TIMER_TASK, delay);
-		TIMER.scheduleAtFixedRate(TIMER_TASK, delay, delay);
+		TIMER.schedule(TIMER_TASK, delay, delay);
 	}
 
 	/**
@@ -66,7 +65,7 @@ public class CachedBatches {
 	 * @return DataPoints for a maximum of one complete hour.
 	 */
 	public static DataPoints get(final String metric, final Map<String, String> tags) {
-		Batch batch = batches.get(metric + tags.hashCode());
+		Batch batch = batches.get(metric + tags.toString());
 		return batch == null ? null : batch.getDataPoints();
 	}
 
@@ -80,7 +79,7 @@ public class CachedBatches {
 	 * @return DataPoints for a maximum of one complete hour.
 	 */
 	public static DataPoints get(final String metric, final long timestamp, final Map<String, String> tags) {
-		Batch batch = batches.get(metric + tags.hashCode());
+		Batch batch = batches.get(metric + tags.toString());
 		DataPoints dp = null;
 		if (batch != null && baseTime(timestamp) == batch.batchBaseTime()) {
 			dp = batch.getDataPoints();
@@ -103,7 +102,7 @@ public class CachedBatches {
 	 */
 	public static DataPoints get(final String metric, final Map<String, String> tags,
 			final long startTime, final long endTime) {
-		Batch batch = batches.get(metric + tags.hashCode());
+		Batch batch = batches.get(metric + tags.toString());
 		DataPoints dp = null;
 		if (batch != null) {
 			final long startBase = baseTime(startTime);
@@ -135,10 +134,10 @@ public class CachedBatches {
 	}
 
 	private static Batch getBatch(final TSDB tsdb, final String metric, final long timestamp, final Map<String, String> tags) {
-		Batch batch = batches.get(metric + tags.hashCode());
+		Batch batch = batches.get(metric + tags.toString());
 		if (batch == null) {
 			batch = new Batch(timestamp, tsdb.newBatch(metric, tags));
-			batches.put(metric + tags.hashCode(), batch);
+			batches.put(metric + tags.toString(), batch);
 		}
 		return batch;
 	}
@@ -161,12 +160,18 @@ public class CachedBatches {
 		}
 	}
 
+	synchronized static void shutdownHook() {
+		for (Map.Entry<String, Batch> entry : batches.entrySet()) {
+			entry.getValue().shutdown();
+		}
+	}
+
 	/**
 	 * No reason to expose this to the rest of the code base.
 	 */
 	private static class Batch {
 
-		private final net.opentsdb.core.WritableDataPoints dataPoints;
+		private final WritableDataPoints dataPoints;
 		private long baseTime;
 
 		Batch(final long timestamp, final net.opentsdb.core.WritableDataPoints dataPoints) {
@@ -196,11 +201,20 @@ public class CachedBatches {
 		}
 
 		/**
+		 * This is pretty much only in the case of a shutdown where data will no longer be coming
+		 * in. Do not use this otherwise!
+		 */
+		void shutdown() {
+			dataPoints.persist();
+			baseTime = Long.MIN_VALUE;
+		}
+
+		/**
 		 * Data comes in time order, and if the BASE we had doesn't match the current base we have
 		 * hit a new hour. It is time to persist the records, reset the baseTime and continue adding
 		 * data points.
 		 */
-		private void persistIfNecessary(final long base) {
+		void persistIfNecessary(final long base) {
 			if (base != baseTime) {
 				dataPoints.persist();
 				baseTime = base;

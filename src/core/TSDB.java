@@ -692,7 +692,7 @@ public final class TSDB {
   }
 
   /**
-   * Forces a flush of any un-committed in memory data including left over 
+   * Forces a flush of any un-committed in memory data including left over
    * compactions.
    * <p>
    * For instance, any data point not persisted will be sent to HBase.
@@ -771,6 +771,12 @@ public final class TSDB {
         return null;
       }
     }
+
+	/**
+	 * Be sure that anything in the cache gets flushed to the data store
+	 * so we don't "accidentally" lose our data.
+	 */
+	CachedBatches.shutdownHook();
 
     if (config.enable_compactions()) {
       LOG.info("Flushing compaction queue");
