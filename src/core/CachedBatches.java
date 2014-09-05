@@ -153,12 +153,6 @@ public class CachedBatches {
 			entry.getValue().persistIfNecessary(base);
 		}
 	}
-	
-	public static void shutdown() {
-		for (Map.Entry<String, Batch> entry : batches.entrySet()) {
-			entry.getValue().dataPoints.persist();
-		}
-	}
 
 	synchronized static void shutdownHook() {
 		for (Map.Entry<String, Batch> entry : batches.entrySet()) {

@@ -103,7 +103,6 @@ final class TextImporter2 {
       LOG.info(String.format("Total: imported %d data points in %.3fs"
                              + " (%.1f points/s)",
                              points, time_delta, (points / time_delta)));
-      CachedBatches.shutdown();
     } finally {
       try {
         tsdb.shutdown().joinUninterruptibly();
