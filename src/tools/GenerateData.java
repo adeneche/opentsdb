@@ -15,10 +15,6 @@ import org.slf4j.LoggerFactory;
 public class GenerateData {
 	private static final Logger LOG = LoggerFactory.getLogger(GenerateData.class);
 
-	//	private static final int RANDOM_RANGE = 101;
-	//	private static final int RANDOM_GAP = 50;
-
-
 	/** Prints usage and exits.  */
 	static void usage(final ArgP argp) {
 		System.err.println("Usage: generate --metric=NAME --year=YYY");
@@ -39,11 +35,14 @@ public class GenerateData {
 		argp.addOption("--range", "RANGE", "(default 101) value += random(range) - gap");
 		argp.addOption("--gap", "GAP", "(default 50) value += random(range) - gap");
 		argp.addOption("--compress", "[optional] compress generated file");
-		if (args.length < 3) {
+		if (args.length < 2) {
 			usage(argp);
 		}
 
 		args = CliOptions.parse(argp, args);
+		if (!argp.has("--metric") || !argp.has("--year")) {
+			usage(argp);
+		}
 
 		String metricName = argp.get("--metric");
 		int numMetrics = Integer.parseInt(argp.get("--num-metrics", "1"));
