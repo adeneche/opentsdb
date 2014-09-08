@@ -79,6 +79,9 @@ case $1 in
   (generate)
     MAINCLASS=GenerateData
     ;;
+  (import_speed)
+    MAINCLASS=SpeedImport
+    ;;
   (mkmetric)
     shift
     set uid assign metrics "$@"
@@ -104,6 +107,6 @@ esac
 shift
 
 JAVA=${JAVA-'java'}
-JVMARGS=${JVMARGS-'-enableassertions -enablesystemassertions'}
+JVMARGS=${JVMARGS-'-enableassertions -enablesystemassertions -Xms500m -Xmx750m'}
 test -r "$localdir/tsdb.local" && . "$localdir/tsdb.local"
 exec $JAVA $JVMARGS -classpath "$CLASSPATH" net.opentsdb.tools.$MAINCLASS "$@"

@@ -72,6 +72,7 @@ tsdb_SRC := \
 	src/tools/GenerateData.java \
 	src/tools/MetaPurge.java	\
 	src/tools/MetaSync.java	\
+        src/tools/SpeedImport.java \
 	src/tools/TSDMain.java	\
 	src/tools/TextImporter.java	\
 	src/tools/TextImporter2.java	\
