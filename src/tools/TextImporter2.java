@@ -20,6 +20,7 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.GZIPInputStream;
 
 import net.opentsdb.core.CachedBatches;
@@ -34,7 +35,7 @@ final class TextImporter2 {
 
 	private static final Logger LOG = LoggerFactory.getLogger(TextImporter2.class);
 
-	private static final List<String> metricTags = new ArrayList<String>();
+	private static final List<MetricTags> metricTags = new ArrayList<MetricTags>();
 	private static TimeValue[] dataPoints = null;
 	private static int next_dp = 0;
 
@@ -207,37 +208,26 @@ final class TextImporter2 {
 			throw new RuntimeException("invalid value: " + value);
 		}
 
-		// build a key that can be later be parsed to extract metric+tags
-		StringBuilder mtBuf = new StringBuilder();
-		mtBuf.append(metric);
+		final HashMap<String, String> tags = new HashMap<String, String>();
 		for (int i = 3; i < words.length; i++) {
-			mtBuf.append(" ");
-			mtBuf.append(words[i]);
+			Tags.parse(tags, words[i]);
 		}
 
-		final String metricTag = mtBuf.toString();
-
-		int metricTagsId = metricTags.indexOf(metricTag);
+		final MetricTags mts = new MetricTags(metric, tags);
+		
+		int metricTagsId = metricTags.indexOf(mts);
 		if (metricTagsId < 0) {
 			metricTagsId = metricTags.size();
-			metricTags.add(metricTag);
+			metricTags.add(mts);
 		}
 
 		dataPoints[next_dp++] = new TimeValue(metricTagsId, timestamp, value);
 	}
 
 	private static void importTimeValue(final TSDB tsdb, TimeValue tv) {
-		final String mts = metricTags.get(tv.metricTagsId);
+		final MetricTags mts = metricTags.get(tv.metricTagsId);
 
-		final String[] mts_words = Tags.splitString(mts, ' ');
-		final String metric = mts_words[0];
-
-		final HashMap<String, String> tags = new HashMap<String, String>();
-		for (int i = 1; i < mts_words.length; i++) {
-			Tags.parse(tags, mts_words[i]);
-		}
-
-		CachedBatches.addPoint(tsdb, metric, tv.timestamp, tv.value, tags);
+		CachedBatches.addPoint(tsdb, mts.metric, tv.timestamp, tv.value, mts.tags);
 	}
 
 	/**
@@ -270,6 +260,31 @@ final class TextImporter2 {
 //		}
 //	}
 
+	private static class MetricTags {
+		public final String metric;
+		public final Map<String, String> tags;
+		
+		public MetricTags(final String metric, final Map<String, String> tags) {
+			this.metric = metric;
+			this.tags = tags;
+		}
+
+		@Override
+		public int hashCode() {
+			return (metric + tags).hashCode();
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (obj == null || !(obj instanceof MetricTags))
+				return false;
+			MetricTags mts = (MetricTags)obj;
+			return metric.equals(mts.metric) && tags.equals(mts.tags);
+		}
+		
+		
+	}
+	
 	private static class TimeValue {
 		public final int metricTagsId;
 		public final long timestamp;
@@ -277,7 +292,7 @@ final class TextImporter2 {
 		//  	public final byte[] v;
 		//  	public final short flags;
 
-		public TimeValue(int metricTagsId, long timestamp, String value) {
+		public TimeValue(final int metricTagsId, final long timestamp, final String value) {
 			this.metricTagsId = metricTagsId;
 			this.timestamp = timestamp;
 			this.value = value;
