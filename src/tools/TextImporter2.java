@@ -26,9 +26,7 @@ import net.opentsdb.core.CachedBatches;
 import net.opentsdb.core.TSDB;
 import net.opentsdb.core.Tags;
 import net.opentsdb.utils.Config;
-import net.opentsdb.utils.DateTime;
 
-import org.hbase.async.Bytes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,77 +35,86 @@ final class TextImporter2 {
 	private static final Logger LOG = LoggerFactory.getLogger(TextImporter2.class);
 
 	private static final List<String> metricTags = new ArrayList<String>();
-	private static final List<TimeValue> dataPoints = new ArrayList<TimeValue>();
+	private static TimeValue[] dataPoints = null;
+	private static int next_dp = 0;
 
-	/** Prints usage and exits with the given retval.  */
-	static void usage(final ArgP argp, final int retval) {
-		System.err.println("Usage: import path [more paths]");
+	/** Prints usage and exits.  */
+	static void usage(final ArgP argp) {
+		System.err.println("Usage: import path [more paths] --noimport --noload");
 		System.err.print(argp.usage());
 		System.err.println("This tool can directly read gzip'ed input files.");
-		System.exit(retval);
-	}
-
-	static long parseDuration(String arg) {
-		if (arg == null) return 0;
-
-		if (arg.charAt(0) == '-') {
-			return -DateTime.parseDuration(arg.substring(1, arg.length()));
-		} else {
-			return DateTime.parseDuration(arg);
-		}
-	}
-
-	static int parseRepeatCount(String arg) {
-		if (arg == null) return 1; // this is an optional parameter, so it may be missing
-
-		//TODO throw exception if count <= 0
-		return Integer.parseInt(arg);
+		System.exit(-1);
 	}
 
 	public static void main(String[] args) throws Exception {
 		ArgP argp = new ArgP();
 		CliOptions.addCommon(argp);
 		CliOptions.addAutoMetricFlag(argp);
-
+		argp.addOption("--noimport", "do not load the data points into openTSDB");
+		argp.addOption("--noload", "do not load the data points into memory");
+		
 		args = CliOptions.parse(argp, args);
-		if (args == null) {
-			usage(argp, 1);
-		} else if (args.length < 1) { //TODO change this to account for our own parameters
-			usage(argp, 2);
+		if (args == null || args.length < 1) {
+			usage(argp);
 		}
 
 		// get a config object
 		Config config = CliOptions.getConfig(argp);
 
-		final TSDB tsdb = new TSDB(config);
-		tsdb.checkNecessaryTablesExist().joinUninterruptibly();
+		final boolean noLoad = argp.has("--noload");
+		final boolean noImport = noLoad || argp.has("--noimport");
 		argp = null;
+
+		final TSDB tsdb = noImport ? null : new TSDB(config);
+
+		if (tsdb != null) {
+			tsdb.checkNecessaryTablesExist().joinUninterruptibly();			
+		}
+
 		try {
-			final long start_freemem = Runtime.getRuntime().freeMemory();
-
+			// we start by computing how many data points contained in all files 
 			int points = 0;
-			final long start_time = System.nanoTime();
-
 			for (final String path : args) {
-				points += importFile(path);
+				points += loadFile(path, true);
 			}
+			
+			LOG.info("Files contain a total of {} data points", points);
+			
+			final long start_time = System.nanoTime();
+			final Runtime runtime = Runtime.getRuntime();
+			
+			if (!noLoad) {
+				runtime.gc();
+				final long usedmem = runtime.totalMemory() -  runtime.freeMemory();
+				
+				dataPoints = new TimeValue[points];
 
-			final long avg_dp_size = (start_freemem - Runtime.getRuntime().freeMemory()) / points;
-			LOG.info("Average datapoint size = {}", avg_dp_size);
+				for (final String path : args) {
+					loadFile(path, false);
+				}
+
+				runtime.gc();
+				final long avg_dp_size = ((runtime.totalMemory() - runtime.freeMemory()) - usedmem) / points;
+				LOG.info("Average datapoint size = {}", avg_dp_size);
+			}
 			
-			LOG.info("Importing all {} data points into TSDB", points);
-			importTimeValues(tsdb);
-			
-			final double time_delta = (System.nanoTime() - start_time) / 1000000000.0;
-			LOG.info(String.format("Total: imported %d data points in %.3fs"
-					+ " (%.1f points/s)",
-					points, time_delta, (points / time_delta)));
+			if (tsdb != null) {
+				LOG.info("Importing all {} data points into TSDB", points);
+				importTimeValues(tsdb);
+				
+				final double time_delta = (System.nanoTime() - start_time) / 1000000000.0;
+				LOG.info(String.format("Total: imported %d data points in %.3fs"
+						+ " (%.1f points/s)",
+						points, time_delta, (points / time_delta)));
+			}
 		} finally {
-			try {
-				tsdb.shutdown().joinUninterruptibly();
-			} catch (Exception e) {
-				LOG.error("Unexpected exception", e);
-				System.exit(1);
+			if (tsdb != null) {
+				try {
+					tsdb.shutdown().joinUninterruptibly();
+				} catch (Exception e) {
+					LOG.error("Unexpected exception", e);
+					System.exit(1);
+				}
 			}
 		}
 	}
@@ -122,9 +129,9 @@ final class TextImporter2 {
 				importTimeValue(tsdb, tv);
 
 				points++;
-				if (points % 100000 == 0) {
+				if (points % 1000000 == 0) {
 					final long now = System.nanoTime();
-					ping_start_time = (now - ping_start_time) / 100000;
+					ping_start_time = (now - ping_start_time) / 1000000;
 					LOG.info(String.format("... %d data points in %dms (%.1f points/s)",
 							points, ping_start_time,
 							(1000000 * 1000.0 / ping_start_time)));
@@ -141,24 +148,30 @@ final class TextImporter2 {
 				points, time_delta, (points * 1000.0 / time_delta)));
 	}
 
-	private static int importFile(final String path) throws IOException {
+	private static int loadFile(final String path, final boolean noLoad) throws IOException {
 		final long start_time = System.nanoTime();
 		long ping_start_time = start_time;
 		final BufferedReader in = open(path);
+		final Runtime runtime = Runtime.getRuntime();
+		
 		String line = null;
 		int points = 0;
+		
 		try {
 			while ((line = in.readLine()) != null) {
+				points++;
+				
+				if (noLoad) continue;
+
 				preprocessLineWords(Tags.splitString(line, ' '));
 
-				points++;
-				if (points % 100000 == 0) {
+				if (points % 1000000 == 0) {
 					final long now = System.nanoTime();
-					ping_start_time = (now - ping_start_time) / 100000;
-					LOG.info(String.format("... %d data points in %dms (%.1f points/s), freemem: %d",
+					ping_start_time = (now - ping_start_time) / 1000000;
+					LOG.info(String.format("... %d data points in %dms (%.1f points/s), usedmem: %d",
 							points, ping_start_time,
 							(1000000 * 1000.0 / ping_start_time), 
-							Runtime.getRuntime().freeMemory()));
+							runtime.totalMemory() - runtime.freeMemory()));
 					ping_start_time = now;
 				}
 			}
@@ -169,6 +182,7 @@ final class TextImporter2 {
 		} finally {
 			in.close();
 		}
+		
 		final long time_delta = (System.nanoTime() - start_time) / 1000000;
 		LOG.info(String.format("Processed %s in %d ms, %d data points"
 				+ " (%.1f points/s)",
@@ -182,6 +196,7 @@ final class TextImporter2 {
 		if (metric.length() <= 0) {
 			throw new RuntimeException("invalid metric: " + metric);
 		}
+		
 		long timestamp = Tags.parseLong(words[1]);
 		if (timestamp <= 0) {
 			throw new RuntimeException("invalid timestamp: " + timestamp);
@@ -208,7 +223,7 @@ final class TextImporter2 {
 			metricTags.add(metricTag);
 		}
 
-		dataPoints.add(new TimeValue(metricTagsId, timestamp, value));
+		dataPoints[next_dp++] = new TimeValue(metricTagsId, timestamp, value);
 	}
 
 	private static void importTimeValue(final TSDB tsdb, TimeValue tv) {
