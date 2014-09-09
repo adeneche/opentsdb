@@ -41,7 +41,7 @@ final class TextImporter2 {
 
 	/** Prints usage and exits.  */
 	static void usage(final ArgP argp) {
-		System.err.println("Usage: import path [more paths] --noimport --noload");
+		System.err.println("Usage: import path [more paths] --noimport --noload --nomem");
 		System.err.print(argp.usage());
 		System.err.println("This tool can directly read gzip'ed input files.");
 		System.exit(-1);
@@ -53,6 +53,7 @@ final class TextImporter2 {
 		CliOptions.addAutoMetricFlag(argp);
 		argp.addOption("--noimport", "do not load the data points into openTSDB");
 		argp.addOption("--noload", "do not load the data points into memory");
+		argp.addOption("--nomem", "do not display memory usage (avoid calling GC)");
 		
 		args = CliOptions.parse(argp, args);
 		if (args == null || args.length < 1) {
@@ -64,6 +65,7 @@ final class TextImporter2 {
 
 		final boolean noLoad = argp.has("--noload");
 		final boolean noImport = noLoad || argp.has("--noimport");
+		final boolean noMem = argp.has("--nomem");
 		argp = null;
 
 		final TSDB tsdb = noImport ? null : new TSDB(config);
@@ -76,7 +78,7 @@ final class TextImporter2 {
 			// we start by computing how many data points contained in all files 
 			int points = 0;
 			for (final String path : args) {
-				points += loadFile(path, true);
+				points += loadFile(path, true, false);
 			}
 			
 			LOG.info("Files contain a total of {} data points", points);
@@ -85,18 +87,21 @@ final class TextImporter2 {
 			final Runtime runtime = Runtime.getRuntime();
 			
 			if (!noLoad) {
-				runtime.gc();
-				final long usedmem = runtime.totalMemory() -  runtime.freeMemory();
+				if (!noMem) runtime.gc();
+				final long usedmem = noMem ? 0 : runtime.totalMemory() -  runtime.freeMemory();
 				
 				dataPoints = new TimeValue[points];
 
 				for (final String path : args) {
-					loadFile(path, false);
+					loadFile(path, false, noMem);
 				}
 
-				runtime.gc();
-				final long avg_dp_size = ((runtime.totalMemory() - runtime.freeMemory()) - usedmem) / points;
-				LOG.info("Average datapoint size = {}", avg_dp_size);
+				if (!noMem) {
+					runtime.gc();
+					
+					final long avg_dp_size = ((runtime.totalMemory() - runtime.freeMemory()) - usedmem) / points;
+					LOG.info("Average datapoint size = {}", avg_dp_size);
+				}
 			}
 			
 			if (tsdb != null) {
@@ -149,7 +154,7 @@ final class TextImporter2 {
 				points, time_delta, (points * 1000.0 / time_delta)));
 	}
 
-	private static int loadFile(final String path, final boolean noLoad) throws IOException {
+	private static int loadFile(final String path, final boolean noLoad, final boolean noMem) throws IOException {
 		final long start_time = System.nanoTime();
 		long ping_start_time = start_time;
 		final BufferedReader in = open(path);
@@ -172,7 +177,7 @@ final class TextImporter2 {
 					LOG.info(String.format("... %d data points in %dms (%.1f points/s), usedmem: %d",
 							points, ping_start_time,
 							(1000000 * 1000.0 / ping_start_time), 
-							runtime.totalMemory() - runtime.freeMemory()));
+							noMem ? 0 : runtime.totalMemory() - runtime.freeMemory()));
 					ping_start_time = now;
 				}
 			}
