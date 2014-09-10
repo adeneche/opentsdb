@@ -131,6 +131,7 @@ final class TextImporter2 {
 		}
 		
 		long start_file;
+		long start_time;
 		
 		try {
 			start_file = files.get(0).t0;
@@ -138,12 +139,26 @@ final class TextImporter2 {
 			for (final FileData fd : files) {
 				// do not bother load in-memory if there is no repetition
 				if (numRepeats == 1) {
+					LOG.info("Importing file {} straight into TSDB", fd.path);
+
+					start_time = System.nanoTime();
 					
 					fd.startAt(start_file);
 					importFile(tsdb, fd, false);
+					
+					displayAvgSpeed(start_time, fd.size);
 				} else {
+					LOG.info("Loading file {} into memory ", fd.path);
+					
+					start_time = System.nanoTime();
 					
 					final TimeValue[] dataPoints = importFile(tsdb, fd, true);
+					
+					displayAvgSpeed(start_time, fd.size);
+					
+					LOG.info("Importing {} repetitions into TSDB", numRepeats);
+					
+					start_time = System.nanoTime();
 					
 					for (int rep = 0; rep < numRepeats; rep++) {
 						fd.startAt(start_file + rep * repDuration);
@@ -152,6 +167,8 @@ final class TextImporter2 {
 							importDataPoint(tsdb, dp, fd);
 						}
 					}
+					
+					displayAvgSpeed(start_time, fd.size * numRepeats);
 					
 					start_file += fd.getDuration();
 				}
@@ -167,6 +184,12 @@ final class TextImporter2 {
 				System.exit(1);
 			}
 		}
+	}
+	
+	private static void displayAvgSpeed(final long start_time, final int points) {
+		final double time_delta = (System.nanoTime() - start_time) / 1000000000.0;
+		LOG.info(String.format("Average speed: %d data points in %.3fs (%.1f points/s)",
+				points, time_delta, (points / time_delta)));
 	}
 
 	/**
