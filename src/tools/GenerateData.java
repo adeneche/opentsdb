@@ -90,17 +90,20 @@ public class GenerateData {
 			long time = (pph > 3600) ? cal.getTimeInMillis() : cal.getTimeInMillis() / 1000;
 			int time_inc = (pph > 3600) ? 3600000 / pph : 3600 / pph;
 			
-			for (int week = 1; week <= weeks; week++) {
-				LOG.info("Week {} / {}", week, weeks);
-				for (int day = 0; day < 7; day++) {
+//			for (int week = 1; week <= weeks; week++) {
+//				LOG.info("Week {} / {}", week, weeks);
+//				for (int day = 0; day < 7; day++) {
 					for (int hour = 0; hour < 24; hour++) {
+						LOG.info("Hour {} / {}", hour+1, 24);
 						for (int i = 0; i < pph; i++) {
 							
 							for (int v = 0; v < numTagK; v++) {
 								tagValues[v] = rand.nextInt(numTagV);
 							}
 							
-							writeRecord(os, metricName + "." + rand.nextInt(numMetrics), time, value, tagValues);
+							final String mname = metricName + ((numMetrics > 1) ? "." + rand.nextInt(numMetrics) : "");
+							
+							writeRecord(os, mname, time, value, tagValues);
 							
 							// Alter the value by a range of +/- RANDOM_GAP
 							value += rand.nextInt(range) - gap;
@@ -110,8 +113,8 @@ public class GenerateData {
 							count++;
 						}
 					}
-				}
-			}
+//				}
+//			}
 
 			os.flush();
 			os.close();

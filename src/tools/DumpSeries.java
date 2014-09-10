@@ -252,7 +252,7 @@ final class DumpSeries {
   
   static void appendImportCell(final StringBuilder buf, final Cell cell, 
       final long base_time, final String tags) {
-    buf.append(cell.absoluteTimestamp(base_time))
+    buf.append(date( cell.absoluteTimestamp(base_time)))
     .append(" ")
     .append(cell.parseValue())
     .append(tags);
