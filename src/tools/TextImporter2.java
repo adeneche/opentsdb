@@ -232,7 +232,7 @@ final class TextImporter2 {
 	private static void importTimeValue(final TSDB tsdb, TimeValue tv) {
 		final MetricTags mts = metricTags.get(tv.metricTagsId);
 
-		CachedBatches.addPoint(tsdb, mts.metric, tv.timestamp, tv.value, mts.tags);
+		CachedBatches.addPoint(tsdb, mts.metric, tv.timestamp, tv.getValue(), mts.tags);
 	}
 
 	/**
@@ -293,14 +293,34 @@ final class TextImporter2 {
 	private static class TimeValue {
 		public final int metricTagsId;
 		public final long timestamp;
-		public final String value;
+		//public final String value;
+		public final int value;
+		public final boolean isfloat;
 		//  	public final byte[] v;
 		//  	public final short flags;
 
+		public String getValue() {
+			if (isfloat)
+				return String.valueOf(Float.intBitsToFloat(value));
+			else
+				return String.valueOf(value);
+		}
+		
 		public TimeValue(final int metricTagsId, final long timestamp, final String value) {
 			this.metricTagsId = metricTagsId;
 			this.timestamp = timestamp;
-			this.value = value;
+			
+			if (Tags.looksLikeInteger(value)) {
+				this.value = Integer.parseInt(value);
+				isfloat = false;
+			} else {
+				final float fval = Float.parseFloat(value);
+  			if (Float.isNaN(fval) || Float.isInfinite(fval)) {
+  				throw new IllegalArgumentException("value is NaN or Infinite: " + value + " for timestamp=" + timestamp);
+  			}
+  			isfloat = true;
+  			this.value = Float.floatToRawIntBits(fval); 
+			}
 
 			//  		if (Tags.looksLikeInteger(value)) {
 			//  			v = getBytes(Tags.parseLong(value));
