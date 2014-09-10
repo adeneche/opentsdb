@@ -13,20 +13,15 @@
 package net.opentsdb.tools;
 
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.GZIPInputStream;
 
 import net.opentsdb.core.CachedBatches;
@@ -35,7 +30,6 @@ import net.opentsdb.core.TSDB;
 import net.opentsdb.core.Tags;
 import net.opentsdb.utils.Config;
 
-import org.hbase.async.HBaseClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,13 +40,12 @@ final class TextImporter2 {
 	private static int numRepeats = 1;
 	private static int numDuplicates = 1;
 	private static String duplicateTag = "";
-	
-	private static BufferedWriter output = null;
-	private static SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy HH:mm:ss.SSS");
+
+	private static final List<MetricTags> metricTags = new ArrayList<MetricTags>();
 
 	/** Prints usage and exits. */
 	private static void usage(final ArgP argp) {
-		System.err.println("Usage: import2 [repeat NUM-REPEATS] [duplicate NUM-DUPLICATES DUPLICATE-TAG-NAME] path [more paths] --tofile=PATH");
+		System.err.println("Usage: import2 [repeat NUM-REPEATS] [duplicate NUM-DUPLICATES DUPLICATE-TAG-NAME] path [more paths]");
 		System.err.print(argp.usage());
 		System.err.println("This tool can directly read gzip'ed input files.");
 		System.exit(-1);
@@ -101,6 +94,88 @@ final class TextImporter2 {
 		return unparsed;
 	}
 
+	public static void main(String[] args) throws Exception {
+		ArgP argp = new ArgP();
+		CliOptions.addCommon(argp);
+		CliOptions.addAutoMetricFlag(argp);
+
+		args = CliOptions.parse(argp, args);
+		if (args == null || args.length < 1) {
+			usage(argp);
+		}
+
+		try {
+			args = parseParams(args);
+		} catch (Exception e) {
+			usage(argp);
+		}
+
+		LOG.info("repeat num: {}", numRepeats);
+		LOG.info("duplicates num: {} and tag {}", numDuplicates, duplicateTag);
+		LOG.info("paths: {}", Arrays.toString(args));		
+
+		List<FileData> files = preloadFiles(args);
+
+		// get a config object
+		TSDB tsdb = null;
+		
+		Config config = CliOptions.getConfig(argp);
+		argp = null;
+		tsdb = new TSDB(config);
+		tsdb.checkNecessaryTablesExist().joinUninterruptibly();
+
+		// compute repetition duration
+		long repDuration = 0;
+		for (final FileData fd : files) {
+			repDuration += fd.getDuration();
+		}
+		
+		long start_file;
+		
+		try {
+			start_file = files.get(0).t0;
+			
+			for (final FileData fd : files) {
+				// do not bother load in-memory if there is no repetition
+				if (numRepeats == 1) {
+					
+					fd.startAt(start_file);
+					importFile(tsdb, fd, false);
+				} else {
+					
+					final TimeValue[] dataPoints = importFile(tsdb, fd, true);
+					
+					for (int rep = 0; rep < numRepeats; rep++) {
+						fd.startAt(start_file + rep * repDuration);
+						
+						for (final TimeValue dp : dataPoints) {
+							importDataPoint(tsdb, dp, fd);
+						}
+					}
+					
+					start_file += fd.getDuration();
+				}
+				
+				// we don't need to share the metricTags between files
+				metricTags.clear();
+			}
+		} finally {
+			try {
+				tsdb.shutdown().joinUninterruptibly();
+			} catch (Exception e) {
+				LOG.error("Unexpected exception", e);
+				System.exit(1);
+			}
+		}
+	}
+
+	/**
+	 * parses all given files, computing the corresponding FileData objects. files that contain less than 2 datapoints are ignored
+	 * 
+	 * @param paths
+	 * @return list of FileData objects
+	 * @throws IOException
+	 */
 	private static List<FileData> preloadFiles(String[] paths) throws IOException {
 		List<FileData> files = new ArrayList<FileData>();
 		String line = null;
@@ -156,94 +231,31 @@ final class TextImporter2 {
 
 		return files;
 	}
-
-	public static void main(String[] args) throws Exception {
-		ArgP argp = new ArgP();
-		CliOptions.addCommon(argp);
-		CliOptions.addAutoMetricFlag(argp);
-		argp.addOption("--tofile", "FILE-NAME", "export data points into a file instead of TSDB");
-
-		args = CliOptions.parse(argp, args);
-		if (args == null || args.length < 1) {
-			usage(argp);
-		}
-
-		try {
-			args = parseParams(args);
-		} catch (Exception e) {
-			usage(argp);
-		}
-
-		LOG.info("repeat num: {}", numRepeats);
-		LOG.info("duplicates num: {} and tag {}", numDuplicates, duplicateTag);
-		LOG.info("paths: {}", Arrays.toString(args));
-
-		final String outputPath = argp.get("--tofile");
-		
-
-		List<FileData> files = preloadFiles(args);
-		
-//		System.exit(0);
-
-		// get a config object
-		TSDB tsdb = null;
-		
-		if (outputPath == null) {
-			Config config = CliOptions.getConfig(argp);
-			argp = null;
-			tsdb = new TSDB(config);
-			tsdb.checkNecessaryTablesExist().joinUninterruptibly();
-		} else {
-			OutputStream os = new FileOutputStream(outputPath);
-			output = new BufferedWriter(new OutputStreamWriter(os));
-		}
-
-		// compute repetition duration
-		long repDuration = 0;
-		for (final FileData fd : files) {
-			repDuration += fd.getDuration();
-		}
-		
-		long start_file;
-		
-		try {
-			start_file = files.get(0).t0;
-			
-			for (final FileData fd : files) {
-				// load file data points into memory [we won't need this if there is no repetition]
-				
-				for (int rep = 0; rep < numRepeats; rep++) {
-					fd.startAt(start_file + rep * repDuration);
-					
-					importFile(tsdb, fd);					
-				}
-				
-				start_file += fd.getDuration();
-				
-			}
-
-		} finally {
-			if (tsdb != null) {
-				try {
-					tsdb.shutdown().joinUninterruptibly();
-				} catch (Exception e) {
-					LOG.error("Unexpected exception", e);
-					System.exit(1);
-				}
-			} else {
-				output.close();
-			}
-		}
-	}
-
-	private static void importFile(final TSDB tsdb, final FileData fd) throws IOException {
+	/**
+	 * Imports a given file into: memory if inMem is true or to TSDB
+	 * @return array of data points if inMem is true, null otherwise
+	 * @throws IOException
+	 */
+	private static TimeValue[] importFile(final TSDB tsdb, final FileData fd, boolean inMem) throws IOException {
 
 		final BufferedReader in = open(fd.path);
 		String line = null;
-
+		TimeValue[] dataPoints = null;
+		int points = 0;
+		
+		if (inMem) {
+			dataPoints = new TimeValue[fd.size];
+		}
+		
 		try {
 			while ((line = in.readLine()) != null) {
-				processLine(tsdb, Tags.splitString(line, ' '), fd);
+				final String[] words = Tags.splitString(line, ' ');
+				final TimeValue dp = processLine(words);
+				
+				if (inMem)
+					dataPoints[points++] = dp;
+				else
+					importDataPoint(tsdb, dp, fd);
 			}
 		} catch (RuntimeException e) {
 			LOG.error("Exception caught while processing file "
@@ -252,56 +264,59 @@ final class TextImporter2 {
 		} finally {
 			in.close();
 		}
+		
+		return dataPoints;
 	}
-
-	private static void processLine(final TSDB tsdb, final String[] words, final FileData fd) throws IOException {
+	
+	private static TimeValue processLine(final String[] words) {
 		final String metric = words[0];
 		if (metric.length() <= 0) {
 			throw new RuntimeException("invalid metric: " + metric);
 		}
+		
 		long timestamp = Tags.parseLong(words[1]);
 		if (timestamp <= 0) {
 			throw new RuntimeException("invalid timestamp: " + timestamp);
 		}
 
-		timestamp = fd.offsetTime(timestamp);
-
 		final String value = words[2];
 		if (value.length() <= 0) {
 			throw new RuntimeException("invalid value: " + value);
 		}
-		
+
 		final HashMap<String, String> tags = new HashMap<String, String>();
 		for (int i = 3; i < words.length; i++) {
-			if (!words[i].isEmpty()) {
-				Tags.parse(tags, words[i]);
-			}
+			Tags.parse(tags, words[i]);
 		}
+
+		final MetricTags mts = new MetricTags(metric, tags);
+		
+		int metricTagsId = metricTags.indexOf(mts);
+		if (metricTagsId < 0) {
+			metricTagsId = metricTags.size();
+			metricTags.add(mts);
+		}
+
+		return new TimeValue(metricTagsId, timestamp, value);
+	}
+
+	/**
+	 * Import a datapoint into TSDB using CachedBatches. Applies concatenation+repetition offset and generates duplicates if necessary 
+	 */
+	private static void importDataPoint(final TSDB tsdb, TimeValue dp, final FileData fd) {
+
+		final MetricTags mts = metricTags.get(dp.metricTagsId);
+		
+		final long timestamp = fd.offsetTime(dp.timestamp);
+		
+		final HashMap<String, String> tags = new HashMap<String, String>(mts.tags);
 
 		for (int d = 0; d < numDuplicates; d++) {
 			if (numDuplicates > 1) {
 				tags.put(duplicateTag, String.valueOf(d));
 			}
 			
-			if (tsdb != null) {
-				CachedBatches.addPoint(tsdb, metric, timestamp, value, tags);
-			} else {
-				StringBuilder sb = new StringBuilder();
-				sb.append(metric)
-				.append(' ')
-				.append(sdf.format(new Date(toMillis(timestamp))))
-				.append(' ')
-				.append(value);
-				for (String key : tags.keySet()) {
-					sb.append(' ')
-					.append(key)
-					.append('=')
-					.append(tags.get(key));
-				}
-				sb.append('\n');
-				
-				output.write(sb.toString());
-			}
+			CachedBatches.addPoint(tsdb, mts.metric, timestamp, dp.value, tags);
 		}
 	}
 
@@ -320,6 +335,10 @@ final class TextImporter2 {
 		return new BufferedReader(new InputStreamReader(is));
 	}
 	
+	/**
+	 * converts a timestamp to millis if it is in seconds
+	 * @return
+	 */
 	private static long toMillis(long t) {
 		if (isMillis(t)) return t;
 
@@ -330,6 +349,9 @@ final class TextImporter2 {
 		return (t & Const.SECOND_MASK) != 0;
 	}
 
+	/**
+	 * Contains time informations about a given file. Used to properly offset the data
+	 */
 	static class FileData {
 		public final String path;
 		private final boolean ms;
@@ -387,5 +409,41 @@ final class TextImporter2 {
 			this.size = size;
 		}
 	}
+	
+	private static class MetricTags {
+		public final String metric;
+		public final Map<String, String> tags;
+		
+		public MetricTags(final String metric, final Map<String, String> tags) {
+			this.metric = metric;
+			this.tags = tags;
+		}
+
+		@Override
+		public int hashCode() {
+			return (metric + tags).hashCode();
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (obj == null || !(obj instanceof MetricTags))
+				return false;
+			MetricTags mts = (MetricTags)obj;
+			return metric.equals(mts.metric) && tags.equals(mts.tags);
+		}
+	}
+
+	private static class TimeValue {
+		public final int metricTagsId;
+		public final long timestamp;
+		public final String value;
+
+		public TimeValue(final int metricTagsId, final long timestamp, final String value) {
+			this.metricTagsId = metricTagsId;
+			this.timestamp = timestamp;
+			this.value = value;
+		}
+	}
+
 
 }
