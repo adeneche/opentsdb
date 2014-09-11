@@ -129,8 +129,6 @@ final class TextImporter2 {
 		LOG.info("repeat num: {}", numRepeats);
 		LOG.info("duplicates num: {} and tag {}", numDuplicates, duplicateTag);
 		LOG.info("paths: {}", Arrays.toString(args));		
-
-		System.exit(-1);
 		
 		List<FileData> files = preloadFiles(args);
 
