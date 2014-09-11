@@ -45,68 +45,84 @@ final class TextImporter2 {
 
 	/** Prints usage and exits. */
 	private static void usage(final ArgP argp) {
-		System.err.println("Usage: import2 [repeat NUM-REPEATS] [duplicate NUM-DUPLICATES DUPLICATE-TAG-NAME] path [more paths]");
+		System.err.println("Usage: import2 [--repeat=NUM-REPEATS] [--duplicate=DUPLICATE-TAG-NAME:NUM-DUPLICATES] path [more paths]");
 		System.err.print(argp.usage());
 		System.err.println("This tool can directly read gzip'ed input files.");
 		System.exit(-1);
 	}
+	
+	private static boolean parseParams(ArgP argp) {
 
-	private static String[] parseParams(String[] args) {
-		int cur = 0;
-
-		// check if first param is "repeat num_repeats"
-		if ("repeat".equals(args[0])) {
-			if (args.length < 3) {
-				throw new RuntimeException("Not enough arguments");
+		// handle repeat argument
+		if (argp.has("--repeat")) {
+			final String repeat = argp.get("--repeat");
+			if (repeat == null) {
+				System.err.println("--repeat is missing NUM-REPEATS");
+				return false;
 			}
-
-			numRepeats = Integer.parseInt(args[1]);
-			if (numRepeats <= 0) {
-				throw new IllegalArgumentException("NUM-REPEATS must be greater than 0");
+			
+			try {
+				numRepeats = Integer.parseInt(repeat);
+			} catch (NumberFormatException e) {
+				System.err.println("NUM-REPEATS is not a valid integer");
+				return false;
 			}
-
-			cur += 2;
+		}
+		
+		if (numRepeats < 1) {
+			System.err.println("NUM-REPEATS must be greater than 0");
+			return false;
 		}
 
-		// check if next param is "duplicate num_duplicates duplicate_tag_name"
-		if ("duplicate".equals(args[cur])) {
-			if (args.length - cur < 4) {
-				throw new RuntimeException("Not enough arguments");
+		if (argp.has("--duplicate")) {
+			final String duplicate = argp.get("--duplicate");
+			if (duplicate == null) {
+				System.err.println("--duplicate is missing DUPLICATE-TAG-NAME:NUM-DUPLICATES");
+				return false;
 			}
 
-			numDuplicates = Integer.parseInt(args[cur+1]);
-			if (numDuplicates <= 0) {
-				throw new IllegalArgumentException("NUM-DUPLICATES must be greater than 0");
+			final int idx = duplicate.indexOf(':');
+			if (idx == 0) {
+				System.err.println("--duplicate is missing DUPLICATE-TAG-NAME");
+				return false;
+			} else if (idx == -1 || idx == duplicate.length()) {
+				System.err.println("--duplicate is missing NUM-DUPLICATES");
+				return false;
 			}
 
-			duplicateTag = args[cur+2];
-			Tags.validateString("DUPLICATE-TAG-NAME", duplicateTag);
-
-			cur += 3;
+			duplicateTag = duplicate.substring(0, idx);
+			
+			try {
+				Tags.validateString("DUPLICATE-TAG-NAME", duplicateTag);
+			} catch (IllegalArgumentException e) {
+				System.err.println("DUPLICATE-TAG-NAME is not a valid tag name");
+				return false;
+			}
+			
+			try {
+				numDuplicates = Integer.parseInt(duplicate.substring(idx+1));
+			} catch (NumberFormatException e) {
+				System.err.println("NUM-DUPLICATES is not a valid integer");
+				return false;
+			}
 		}
 
-		// return unparsed arguments
-		String[] unparsed = new String[args.length - cur];
-		for (int i = 0; cur < args.length; cur++, i++) {
-			unparsed[i] = args[cur];
+		if (numDuplicates < 1) {
+			System.err.println("NUM-DUPLICATES must be greater than 0");
+			return false;
 		}
-
-		return unparsed;
+		
+		return true;
 	}
-
+	
 	public static void main(String[] args) throws Exception {
 		ArgP argp = new ArgP();
 		CliOptions.addCommon(argp);
 		CliOptions.addAutoMetricFlag(argp);
-
+		argp.addOption("--repeat", "NUM-REPEATS", "(default 1) repeat all concatenated files NUM-REPEATS times"); 
+		argp.addOption("--duplicate", "DUPLICATE-TAG-NAME:NUM-DUPLICATES", "duplicate each data points NUM-DUPLICATES while using TAG-NAME as a tag");
 		args = CliOptions.parse(argp, args);
-		if (args == null || args.length < 1) {
-			usage(argp);
-		}
-
-		try {
-			args = parseParams(args);
-		} catch (Exception e) {
+		if (args == null || args.length < 1 || !parseParams(argp)) {
 			usage(argp);
 		}
 
@@ -114,11 +130,13 @@ final class TextImporter2 {
 		LOG.info("duplicates num: {} and tag {}", numDuplicates, duplicateTag);
 		LOG.info("paths: {}", Arrays.toString(args));		
 
+		System.exit(-1);
+		
 		List<FileData> files = preloadFiles(args);
 
 		// get a config object
 		TSDB tsdb = null;
-		
+
 		Config config = CliOptions.getConfig(argp);
 		argp = null;
 		tsdb = new TSDB(config);
@@ -129,50 +147,50 @@ final class TextImporter2 {
 		for (final FileData fd : files) {
 			repDuration += fd.getDuration();
 		}
-		
+
 		long start_file;
 		long start_time;
-		
+
 		try {
 			start_file = files.get(0).t0;
-			
+
 			for (final FileData fd : files) {
 				// do not bother load in-memory if there is no repetition
 				if (numRepeats == 1) {
 					LOG.info("Importing file {} straight into TSDB", fd.path);
 
 					start_time = System.nanoTime();
-					
+
 					fd.startAt(start_file);
 					importFile(tsdb, fd, false);
-					
+
 					displayAvgSpeed(start_time, fd.size);
 				} else {
 					LOG.info("Loading file {} into memory ", fd.path);
-					
+
 					start_time = System.nanoTime();
-					
+
 					final TimeValue[] dataPoints = importFile(tsdb, fd, true);
-					
+
 					displayAvgSpeed(start_time, fd.size);
-					
+
 					LOG.info("Importing {} repetitions into TSDB", numRepeats);
-					
+
 					start_time = System.nanoTime();
-					
+
 					for (int rep = 0; rep < numRepeats; rep++) {
 						fd.startAt(start_file + rep * repDuration);
-						
+
 						for (final TimeValue dp : dataPoints) {
 							importDataPoint(tsdb, dp, fd);
 						}
 					}
-					
+
 					displayAvgSpeed(start_time, fd.size * numRepeats);
-					
+
 					start_file += fd.getDuration();
 				}
-				
+
 				// we don't need to share the metricTags between files
 				metricTags.clear();
 			}
@@ -185,7 +203,7 @@ final class TextImporter2 {
 			}
 		}
 	}
-	
+
 	private static void displayAvgSpeed(final long start_time, final int points) {
 		final double time_delta = (System.nanoTime() - start_time) / 1000000000.0;
 		LOG.info(String.format("Average speed: %d data points in %.3fs (%.1f points/s)",
@@ -213,23 +231,23 @@ final class TextImporter2 {
 				// process first line to extract t0
 				line = in.readLine();
 				last = null;
-				
+
 				if (line == null) { // empty file, ignore
 					LOG.warn("file {} will be ignored because it's empty", path);
 					in.close();
 					continue;
 				}
-				
+
 				t0 = Long.parseLong(Tags.splitString(line, ' ')[1]);
 				points = 1;
-				
+
 				// TODO assuming all data points of a file have the same tags, check if duplicate tag isn't in the first line
 
 				while ((line = in.readLine()) != null) {
 					last = line;
 					points++;
 				}
-				
+
 				// process last line
 				if (last == null) { // file contains one data point only
 					// ignore because we can't compute a proper interval
@@ -237,9 +255,9 @@ final class TextImporter2 {
 					in.close();
 					continue;
 				}
-				
+
 				t1 = Long.parseLong(Tags.splitString(last, ' ')[1]);
-				
+
 				final FileData fd = new FileData(path, t0, t1, points);
 				LOG.info("file {}: t0= {}, t1= {}, size={}, interval={}, duration={}", fd.path, fd.t0, fd.t1, fd.size, fd.getInterval(), fd.getDuration());
 				files.add(fd);
@@ -265,16 +283,16 @@ final class TextImporter2 {
 		String line = null;
 		TimeValue[] dataPoints = null;
 		int points = 0;
-		
+
 		if (inMem) {
 			dataPoints = new TimeValue[fd.size];
 		}
-		
+
 		try {
 			while ((line = in.readLine()) != null) {
 				final String[] words = Tags.splitString(line, ' ');
 				final TimeValue dp = processLine(words);
-				
+
 				if (inMem)
 					dataPoints[points++] = dp;
 				else
@@ -287,16 +305,16 @@ final class TextImporter2 {
 		} finally {
 			in.close();
 		}
-		
+
 		return dataPoints;
 	}
-	
+
 	private static TimeValue processLine(final String[] words) {
 		final String metric = words[0];
 		if (metric.length() <= 0) {
 			throw new RuntimeException("invalid metric: " + metric);
 		}
-		
+
 		long timestamp = Tags.parseLong(words[1]);
 		if (timestamp <= 0) {
 			throw new RuntimeException("invalid timestamp: " + timestamp);
@@ -313,7 +331,7 @@ final class TextImporter2 {
 		}
 
 		final MetricTags mts = new MetricTags(metric, tags);
-		
+
 		int metricTagsId = metricTags.indexOf(mts);
 		if (metricTagsId < 0) {
 			metricTagsId = metricTags.size();
@@ -329,16 +347,16 @@ final class TextImporter2 {
 	private static void importDataPoint(final TSDB tsdb, TimeValue dp, final FileData fd) {
 
 		final MetricTags mts = metricTags.get(dp.metricTagsId);
-		
+
 		final long timestamp = fd.offsetTime(dp.timestamp);
-		
+
 		final HashMap<String, String> tags = new HashMap<String, String>(mts.tags);
 
 		for (int d = 0; d < numDuplicates; d++) {
 			if (numDuplicates > 1) {
 				tags.put(duplicateTag, String.valueOf(d));
 			}
-			
+
 			CachedBatches.addPoint(tsdb, mts.metric, timestamp, dp.value, tags);
 		}
 	}
@@ -357,7 +375,7 @@ final class TextImporter2 {
 		// I <3 Java's IO library.
 		return new BufferedReader(new InputStreamReader(is));
 	}
-	
+
 	/**
 	 * converts a timestamp to millis if it is in seconds
 	 * @return
@@ -367,7 +385,7 @@ final class TextImporter2 {
 
 		return t * 1000;
 	}
-	
+
 	private static boolean isMillis(long t) {
 		return (t & Const.SECOND_MASK) != 0;
 	}
@@ -412,7 +430,7 @@ final class TextImporter2 {
 				// convert t to seconds
 				t = (long) Math.ceil(t / 1000.0);
 			}
-			
+
 			offset = t - t0;
 		}
 
@@ -432,11 +450,11 @@ final class TextImporter2 {
 			this.size = size;
 		}
 	}
-	
+
 	private static class MetricTags {
 		public final String metric;
 		public final Map<String, String> tags;
-		
+
 		public MetricTags(final String metric, final Map<String, String> tags) {
 			this.metric = metric;
 			this.tags = tags;
