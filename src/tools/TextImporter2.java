@@ -30,6 +30,7 @@ import net.opentsdb.core.TSDB;
 import net.opentsdb.core.Tags;
 import net.opentsdb.utils.Config;
 
+import org.hbase.async.Bytes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,7 +46,7 @@ final class TextImporter2 {
 
 	/** Prints usage and exits. */
 	private static void usage(final ArgP argp) {
-		System.err.println("Usage: import2 [--repeat=NUM-REPEATS] [--duplicate=DUPLICATE-TAG-NAME:NUM-DUPLICATES] path [more paths]");
+		System.err.println("Usage: import2 [--repeat=NUM-REPEATS] [--duplicate=DUPLICATE-TAG-NAME:NUM-DUPLICATES] path [more paths] --noimport");
 		System.err.print(argp.usage());
 		System.err.println("This tool can directly read gzip'ed input files.");
 		System.exit(-1);
@@ -119,6 +120,7 @@ final class TextImporter2 {
 		ArgP argp = new ArgP();
 		CliOptions.addCommon(argp);
 		CliOptions.addAutoMetricFlag(argp);
+		argp.addOption("--noimport", "print data points instead of importing them to TSDB");
 		argp.addOption("--repeat", "NUM-REPEATS", "(default 1) repeat all concatenated files NUM-REPEATS times"); 
 		argp.addOption("--duplicate", "DUPLICATE-TAG-NAME:NUM-DUPLICATES", "duplicate each data points NUM-DUPLICATES while using TAG-NAME as a tag");
 		args = CliOptions.parse(argp, args);
@@ -135,10 +137,12 @@ final class TextImporter2 {
 		// get a config object
 		TSDB tsdb = null;
 
-		Config config = CliOptions.getConfig(argp);
-		argp = null;
-		tsdb = new TSDB(config);
-		tsdb.checkNecessaryTablesExist().joinUninterruptibly();
+		if (!argp.has("--noimport")) {
+			Config config = CliOptions.getConfig(argp);
+			argp = null;
+			tsdb = new TSDB(config);
+			tsdb.checkNecessaryTablesExist().joinUninterruptibly();
+		}
 
 		// compute repetition duration
 		long repDuration = 0;
@@ -168,7 +172,7 @@ final class TextImporter2 {
 
 					start_time = System.nanoTime();
 
-					final TimeValue[] dataPoints = importFile(tsdb, fd, true);
+					final byte[] dp_bytes = importFile(tsdb, fd, true);
 
 					displayAvgSpeed(start_time, fd.size);
 
@@ -179,7 +183,8 @@ final class TextImporter2 {
 					for (int rep = 0; rep < numRepeats; rep++) {
 						fd.startAt(start_file + rep * repDuration);
 
-						for (final TimeValue dp : dataPoints) {
+						for (int i = 0; i < fd.size; i++) {
+							final TimeValue dp = TimeValue.fromByteArray(dp_bytes, i);
 							importDataPoint(tsdb, dp, fd);
 						}
 					}
@@ -193,11 +198,13 @@ final class TextImporter2 {
 				metricTags.clear();
 			}
 		} finally {
-			try {
-				tsdb.shutdown().joinUninterruptibly();
-			} catch (Exception e) {
-				LOG.error("Unexpected exception", e);
-				System.exit(1);
+			if (tsdb != null) {
+				try {
+					tsdb.shutdown().joinUninterruptibly();
+				} catch (Exception e) {
+					LOG.error("Unexpected exception", e);
+					System.exit(1);
+				}
 			}
 		}
 	}
@@ -272,29 +279,34 @@ final class TextImporter2 {
 	}
 	/**
 	 * Imports a given file into: memory if inMem is true or to TSDB
-	 * @return array of data points if inMem is true, null otherwise
+	 * @return array of data points if inMem is true, packed in a byte[], null otherwise
 	 * @throws IOException
 	 */
-	private static TimeValue[] importFile(final TSDB tsdb, final FileData fd, boolean inMem) throws IOException {
+	private static byte[] importFile(final TSDB tsdb, final FileData fd, boolean inMem) throws IOException {
 
 		final BufferedReader in = open(fd.path);
 		String line = null;
-		TimeValue[] dataPoints = null;
+
+		byte[] dp_bytes = null;
 		int points = 0;
 
 		if (inMem) {
-			dataPoints = new TimeValue[fd.size];
+			dp_bytes = new byte[fd.size*TimeValue.SIZE];
 		}
 
 		try {
 			while ((line = in.readLine()) != null) {
 				final String[] words = Tags.splitString(line, ' ');
 				final TimeValue dp = processLine(words);
-
-				if (inMem)
-					dataPoints[points++] = dp;
-				else
+				
+				if (inMem) {
+					TimeValue.toByteArray(dp_bytes, points, dp);
+				}
+				else {
 					importDataPoint(tsdb, dp, fd);
+				}
+
+				points++;
 			}
 		} catch (RuntimeException e) {
 			LOG.error("Exception caught while processing file "
@@ -304,7 +316,7 @@ final class TextImporter2 {
 			in.close();
 		}
 
-		return dataPoints;
+		return dp_bytes;
 	}
 
 	private static TimeValue processLine(final String[] words) {
@@ -355,8 +367,31 @@ final class TextImporter2 {
 				tags.put(duplicateTag, String.valueOf(d));
 			}
 
-			CachedBatches.addPoint(tsdb, mts.metric, timestamp, dp.value, tags);
+			if (tsdb != null) {
+				CachedBatches.addPoint(tsdb, mts.metric, timestamp, dp.getValueString(), tags);
+			} else {
+				logDataPoint(mts.metric, timestamp, dp.getValueString(), tags);
+			}
 		}
+	}
+	
+	private static void logDataPoint(final String metric, final long timestamp, final String value, final HashMap<String, String> tags) {
+		final StringBuilder buf = new StringBuilder();
+
+		buf.append(metric)
+		.append(' ')
+		.append(DumpSeries.date(timestamp))
+		.append(' ')
+		.append(value);
+		
+		for (String tag : tags.keySet()) {
+			buf.append(' ')
+			.append(tag)
+			.append('=')
+			.append(tags.get(tag));
+		}
+		
+		LOG.info(buf.toString());
 	}
 
 	/**
@@ -472,17 +507,57 @@ final class TextImporter2 {
 		}
 	}
 
-	private static class TimeValue {
-		public final int metricTagsId;
+	private static class TimeValue { // (2+8+4+1) = 15 bytes
+		public static final int SIZE = 15; // in bytes
+		public final short metricTagsId;
 		public final long timestamp;
-		public final String value;
+		private final int ivalue;
+		private final boolean isfloat;
 
+		public String getValueString() {
+			if (isfloat)
+				return String.valueOf(Float.intBitsToFloat(ivalue));
+			else
+				return String.valueOf(ivalue);
+		}
+		
+		public static TimeValue fromByteArray(final byte[] bytes, final int off) {
+			int cur = off * TimeValue.SIZE;
+			final short metricTagsId = Bytes.getShort(bytes, cur); cur+= 2;
+			final long timestamp = Bytes.getLong(bytes, cur); cur+= 8;
+			final boolean isfloat = bytes[cur] == 1; cur++;
+			final int ivalue = Bytes.getInt(bytes, cur); cur+= 4;
+			
+			return new TimeValue(metricTagsId, timestamp, isfloat, ivalue);
+		}
+		
+		public static void toByteArray(final byte[] bytes, final int off, final TimeValue dp) {
+			int cur = off * TimeValue.SIZE;
+			System.arraycopy(Bytes.fromShort(dp.metricTagsId), 0, bytes, cur, 2); cur+= 2;
+			System.arraycopy(Bytes.fromLong(dp.timestamp), 0, bytes, cur, 8); cur+= 8;
+			bytes[cur] = (byte) (dp.isfloat ? 1:0); cur++;
+			System.arraycopy(Bytes.fromInt(dp.ivalue), 0, bytes, cur, 4); cur+= 4;
+		}
+		
 		public TimeValue(final int metricTagsId, final long timestamp, final String value) {
+			this.metricTagsId = (short) metricTagsId;
+			this.timestamp = timestamp;
+			
+			this.isfloat = !Tags.looksLikeInteger(value);
+			if (isfloat) {
+				float fval = Float.parseFloat(value);
+				ivalue = Float.floatToRawIntBits(fval);
+			} else {
+				ivalue = Integer.parseInt(value);
+			}
+		}
+
+		public TimeValue(final short metricTagsId, final long timestamp, final boolean isfloat, int ivalue) {
 			this.metricTagsId = metricTagsId;
 			this.timestamp = timestamp;
-			this.value = value;
+			this.ivalue = ivalue;
+			this.isfloat = isfloat;
 		}
 	}
-
 
 }
