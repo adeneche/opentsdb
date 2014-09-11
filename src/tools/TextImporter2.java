@@ -28,6 +28,7 @@ import net.opentsdb.core.TSDB;
 import net.opentsdb.core.Tags;
 import net.opentsdb.utils.Config;
 
+import org.hbase.async.Bytes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,7 +37,7 @@ final class TextImporter2 {
 	private static final Logger LOG = LoggerFactory.getLogger(TextImporter2.class);
 
 	private static final List<MetricTags> metricTags = new ArrayList<MetricTags>();
-	private static TimeValue[] dataPoints = null;
+	private static byte[] dp_bytes = null;
 	private static int next_dp = 0;
 
 	/** Prints usage and exits.  */
@@ -90,7 +91,7 @@ final class TextImporter2 {
 				if (!noMem) runtime.gc();
 				final long usedmem = noMem ? 0 : runtime.totalMemory() -  runtime.freeMemory();
 				
-				dataPoints = new TimeValue[points];
+				dp_bytes = new byte[points*TimeValue.SIZE];
 
 				for (final String path : args) {
 					loadFile(path, false, noMem);
@@ -131,8 +132,9 @@ final class TextImporter2 {
 
 		int points = 0;
 		try {
-			for (final TimeValue tv : dataPoints) {
-				importTimeValue(tsdb, tv);
+			for (int i = 0; i < next_dp; i++) {
+				final TimeValue dp = TimeValue.fromByteArray(dp_bytes, i*TimeValue.SIZE);
+				importTimeValue(tsdb, dp);
 
 				points++;
 				if (points % 1000000 == 0) {
@@ -220,19 +222,22 @@ final class TextImporter2 {
 
 		final MetricTags mts = new MetricTags(metric, tags);
 		
-		int metricTagsId = metricTags.indexOf(mts);
+		short metricTagsId = (short) metricTags.indexOf(mts);
 		if (metricTagsId < 0) {
-			metricTagsId = metricTags.size();
+			metricTagsId = (short) metricTags.size();
 			metricTags.add(mts);
 		}
 
-		dataPoints[next_dp++] = new TimeValue(metricTagsId, timestamp, value);
+		TimeValue.toByteArray(dp_bytes, next_dp*TimeValue.SIZE, metricTagsId, timestamp, value);
+		next_dp++;
 	}
 
-	private static void importTimeValue(final TSDB tsdb, TimeValue tv) {
-		final MetricTags mts = metricTags.get(tv.metricTagsId);
-
-		CachedBatches.addPoint(tsdb, mts.metric, tv.timestamp, tv.getValue(), mts.tags);
+	private static void importTimeValue(final TSDB tsdb, final TimeValue dp) {
+		
+		final MetricTags mts = metricTags.get(dp.metricTagsId);
+		final String value = dp.getValueString();
+		
+		CachedBatches.addPoint(tsdb, mts.metric, dp.timestamp, value, mts.tags);
 	}
 
 	/**
@@ -249,21 +254,6 @@ final class TextImporter2 {
 		// I <3 Java's IO library.
 		return new BufferedReader(new InputStreamReader(is));
 	}
-
-//	private static byte[] getBytes(long value) {
-//		if (Byte.MIN_VALUE <= value && value <= Byte.MAX_VALUE) {
-//			return new byte[] {(byte) value};
-//		}
-//		else if (Short.MIN_VALUE <= value && value <= Short.MAX_VALUE) {
-//			return Bytes.fromShort((short) value);
-//		}
-//		else if (Integer.MIN_VALUE <= value && value <= Integer.MAX_VALUE) {
-//			return Bytes.fromInt((int) value);
-//		}
-//		else {
-//			return Bytes.fromLong(value);
-//		}
-//	}
 
 	private static class MetricTags {
 		public final String metric;
@@ -286,54 +276,56 @@ final class TextImporter2 {
 			MetricTags mts = (MetricTags)obj;
 			return metric.equals(mts.metric) && tags.equals(mts.tags);
 		}
-		
-		
-	}
-	
-	private static class TimeValue {
-		public final int metricTagsId;
-		public final long timestamp;
-		//public final String value;
-		public final int value;
-		public final boolean isfloat;
-		//  	public final byte[] v;
-		//  	public final short flags;
 
-		public String getValue() {
+	}
+
+	private static class TimeValue { // (2+8+4+1) = 15 bytes
+		public static final int SIZE = 15; // in bytes
+		public short metricTagsId;
+		public final long timestamp;
+		private final int ivalue;
+		private final boolean isfloat;
+
+		public String getValueString() {
 			if (isfloat)
-				return String.valueOf(Float.intBitsToFloat(value));
+				return String.valueOf(Float.intBitsToFloat(ivalue));
 			else
-				return String.valueOf(value);
+				return String.valueOf(ivalue);
 		}
 		
-		public TimeValue(final int metricTagsId, final long timestamp, final String value) {
+		public static TimeValue fromByteArray(final byte[] bytes, final int off) {
+			int cur = off;
+			final short metricTagsId = Bytes.getShort(bytes, cur); cur+= 2;
+			final long timestamp = Bytes.getLong(bytes, cur); cur+= 8;
+			final boolean isfloat = bytes[cur] == 1; cur++;
+			final int ivalue = Bytes.getInt(bytes, cur); cur+= 4;
+			
+			return new TimeValue(metricTagsId, timestamp, isfloat, ivalue);
+		}
+		
+		public static void toByteArray(final byte[] bytes, final int off, final short metricTagsId, final long timestamp, final String value) {
+			final boolean isfloat = !Tags.looksLikeInteger(value);
+			final int ivalue;
+			if (isfloat) {
+				float fval = Float.parseFloat(value);
+				ivalue = Float.floatToRawIntBits(fval);
+			} else {
+				ivalue = Integer.parseInt(value);
+			}
+			
+			int cur = off;
+			System.arraycopy(Bytes.fromShort(metricTagsId), 0, bytes, off, 2); cur+= 2;
+			System.arraycopy(Bytes.fromLong(timestamp), 0, bytes, cur, 8); cur+= 8;
+			bytes[cur] = (byte) (isfloat ? 1:0); cur++;
+			System.arraycopy(Bytes.fromInt(ivalue), 0, bytes, cur, 4); cur+= 4;
+		}
+
+		public TimeValue(final short metricTagsId, final long timestamp, final boolean isfloat, int ivalue) {
 			this.metricTagsId = metricTagsId;
 			this.timestamp = timestamp;
-			
-			if (Tags.looksLikeInteger(value)) {
-				this.value = Integer.parseInt(value);
-				isfloat = false;
-			} else {
-				final float fval = Float.parseFloat(value);
-  			if (Float.isNaN(fval) || Float.isInfinite(fval)) {
-  				throw new IllegalArgumentException("value is NaN or Infinite: " + value + " for timestamp=" + timestamp);
-  			}
-  			isfloat = true;
-  			this.value = Float.floatToRawIntBits(fval); 
-			}
-
-			//  		if (Tags.looksLikeInteger(value)) {
-			//  			v = getBytes(Tags.parseLong(value));
-			//    		flags = (short) (v.length - 1);  // Just the length.
-			//  		} else {
-			//  			final float fval = Float.parseFloat(value);
-			//  			if (Float.isNaN(fval) || Float.isInfinite(fval)) {
-			//  				throw new IllegalArgumentException("value is NaN or Infinite: " + value + " for timestamp=" + timestamp);
-			//  			}
-			//  			
-			//  			flags = Const.FLAG_FLOAT | 0x3;  // A float stored on 4 bytes.
-			//  			v = Bytes.fromInt(Float.floatToRawIntBits(fval));
-			//  		}
+			this.ivalue = ivalue;
+			this.isfloat = isfloat;
 		}
 	}
+
 }
