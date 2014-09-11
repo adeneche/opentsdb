@@ -30,7 +30,7 @@ public class GenerateData {
 		argp.addOption("--num-tagv", "NUM_TAGV", "(default 1) number of different values generated for each tag");
 		argp.addOption("--year", "YYYY", "starting year");
 		argp.addOption("--num-years", "YEARS", "(default 1) number of years generated");
-		argp.addOption("--num-weeks", "WEEKS",  "(default 52) total number of weeks to generate per year");
+		argp.addOption("--num-days", "DAYS",  "(default 1) total number of days to generate per year");
 		argp.addOption("--pph", "SAMPLE_SIZE", "(default 3600) number of data points per hour");
 		argp.addOption("--range", "RANGE", "(default 101) value += random(range) - gap");
 		argp.addOption("--gap", "GAP", "(default 50) value += random(range) - gap");
@@ -50,7 +50,7 @@ public class GenerateData {
 		int numTagV = Integer.parseInt(argp.get("--num-tagv", "1"));
 		int startYear = Integer.parseInt(argp.get("--year"));
 		int totalYears = Integer.parseInt(argp.get("--num-years", "1"));
-		int weeks = Integer.parseInt(argp.get("--num-weeks", "52"));
+		int days = Integer.parseInt(argp.get("--num-days", "1"));
 		boolean useCompression = argp.has("--compress");
 		int pph = Integer.parseInt(argp.get("--pph", "3600"));
 		int range = Integer.parseInt(argp.get("--range", "101"));
@@ -64,10 +64,10 @@ public class GenerateData {
 		LOG.info("Generating {} years starting from year {}, for metric {} with {} points per hour", totalYears, startYear, metricName, pph);
 		LOG.info("Generating {} metrics with {} tags and {} values for each tag", numMetrics, numTagK, numTagV);
 
-		generateYearlyFiles(useCompression, metricName, numMetrics, numTagK, numTagV, startYear, totalYears, weeks, pph, range, gap, new Random());
+		generateYearlyFiles(useCompression, metricName, numMetrics, numTagK, numTagV, startYear, totalYears, days, pph, range, gap, new Random());
 	}
 
-	public static void generateYearlyFiles(final boolean useCompression, final String metricName, final int numMetrics, final int numTagK, final int numTagV, final int startYear, final int totalYears, final int weeks, final int pph, final int range, final int gap, final Random rand) throws IOException {
+	public static void generateYearlyFiles(final boolean useCompression, final String metricName, final int numMetrics, final int numTagK, final int numTagV, final int startYear, final int totalYears, final int days, final int pph, final int range, final int gap, final Random rand) throws IOException {
 		//TODO add timezone (--tz) param to argp
 		Calendar cal = Calendar.getInstance(); // use local timezone
 		cal.set(startYear, 0, 1, 0, 0, 0);
@@ -90,11 +90,9 @@ public class GenerateData {
 			long time = (pph > 3600) ? cal.getTimeInMillis() : cal.getTimeInMillis() / 1000;
 			int time_inc = (pph > 3600) ? 3600000 / pph : 3600 / pph;
 			
-//			for (int week = 1; week <= weeks; week++) {
-//				LOG.info("Week {} / {}", week, weeks);
-//				for (int day = 0; day < 7; day++) {
+				for (int day = 0; day < days; day++) {
+					LOG.info("Day {} / {}", day+1, days);
 					for (int hour = 0; hour < 24; hour++) {
-						LOG.info("Hour {} / {}", hour+1, 24);
 						for (int i = 0; i < pph; i++) {
 							
 							for (int v = 0; v < numTagK; v++) {
@@ -113,8 +111,7 @@ public class GenerateData {
 							count++;
 						}
 					}
-//				}
-//			}
+				}
 
 			os.flush();
 			os.close();
