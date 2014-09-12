@@ -41,12 +41,14 @@ final class TextImporter2 {
 	private static int numRepeats = 1;
 	private static int numDuplicates = 1;
 	private static String duplicateTag = "";
+	
+	private static boolean toScreen;
 
 	private static final List<MetricTags> metricTags = new ArrayList<MetricTags>();
 
 	/** Prints usage and exits. */
 	private static void usage(final ArgP argp) {
-		System.err.println("Usage: import2 [--repeat=NUM-REPEATS] [--duplicate=DUPLICATE-TAG-NAME:NUM-DUPLICATES] path [more paths] --noimport");
+		System.err.println("Usage: import2 [--repeat=NUM-REPEATS] [--duplicate=DUPLICATE-TAG-NAME:NUM-DUPLICATES] path [more paths] [--noimport] [--print]");
 		System.err.print(argp.usage());
 		System.err.println("This tool can directly read gzip'ed input files.");
 		System.exit(-1);
@@ -120,7 +122,8 @@ final class TextImporter2 {
 		ArgP argp = new ArgP();
 		CliOptions.addCommon(argp);
 		CliOptions.addAutoMetricFlag(argp);
-		argp.addOption("--noimport", "print data points instead of importing them to TSDB");
+		argp.addOption("--print", "print data points on screen");
+		argp.addOption("--noimport", "do not import data to TSDB");
 		argp.addOption("--repeat", "NUM-REPEATS", "(default 1) repeat all concatenated files NUM-REPEATS times"); 
 		argp.addOption("--duplicate", "DUPLICATE-TAG-NAME:NUM-DUPLICATES", "duplicate each data points NUM-DUPLICATES while using TAG-NAME as a tag");
 		args = CliOptions.parse(argp, args);
@@ -136,6 +139,8 @@ final class TextImporter2 {
 
 		// get a config object
 		TSDB tsdb = null;
+		
+		toScreen = argp.has("--print");
 
 		if (!argp.has("--noimport")) {
 			Config config = CliOptions.getConfig(argp);
@@ -151,7 +156,6 @@ final class TextImporter2 {
 		}
 
 		long start_file;
-		long start_time;
 
 		try {
 			start_file = files.get(0).t0;
@@ -161,35 +165,31 @@ final class TextImporter2 {
 				if (numRepeats == 1) {
 					LOG.info("Importing file {} straight into TSDB", fd.path);
 
-					start_time = System.nanoTime();
-
 					fd.startAt(start_file);
 					importFile(tsdb, fd, false);
-
-					displayAvgSpeed(start_time, fd.size);
 				} else {
 					LOG.info("Loading file {} into memory ", fd.path);
 
-					start_time = System.nanoTime();
-
 					final byte[] dp_bytes = importFile(tsdb, fd, true);
-
-					displayAvgSpeed(start_time, fd.size);
 
 					LOG.info("Importing {} repetitions into TSDB", numRepeats);
 
-					start_time = System.nanoTime();
+					final long start_time = System.nanoTime();
 
+					int points = 0;
 					for (int rep = 0; rep < numRepeats; rep++) {
 						fd.startAt(start_file + rep * repDuration);
 
 						for (int i = 0; i < fd.size; i++) {
 							final TimeValue dp = TimeValue.fromByteArray(dp_bytes, i);
 							importDataPoint(tsdb, dp, fd);
+							
+							points+= numDuplicates;
+							if (points % 1000000 == 0) {
+								displayAvgSpeed(start_time, points);
+							}
 						}
 					}
-
-					displayAvgSpeed(start_time, fd.size * numRepeats);
 
 					start_file += fd.getDuration();
 				}
@@ -294,6 +294,8 @@ final class TextImporter2 {
 			dp_bytes = new byte[fd.size*TimeValue.SIZE];
 		}
 
+		final long start_time = System.nanoTime();
+		
 		try {
 			while ((line = in.readLine()) != null) {
 				final String[] words = Tags.splitString(line, ' ');
@@ -307,6 +309,10 @@ final class TextImporter2 {
 				}
 
 				points++;
+				
+				if (points % 1000000 == 0) {
+					displayAvgSpeed(start_time, points);
+				}
 			}
 		} catch (RuntimeException e) {
 			LOG.error("Exception caught while processing file "
@@ -369,7 +375,9 @@ final class TextImporter2 {
 
 			if (tsdb != null) {
 				CachedBatches.addPoint(tsdb, mts.metric, timestamp, dp.getValueString(), tags);
-			} else {
+			} 
+
+			if (toScreen) {
 				logDataPoint(mts.metric, timestamp, dp.getValueString(), tags);
 			}
 		}
