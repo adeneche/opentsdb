@@ -48,7 +48,7 @@ final class TextImporter2 {
 
 	/** Prints usage and exits. */
 	private static void usage(final ArgP argp) {
-		System.err.println("Usage: import2 [--repeat=NUM-REPEATS] [--duplicate=DUPLICATE-TAG-NAME:NUM-DUPLICATES] path [more paths] [--noimport] [--print]");
+		System.err.println("Usage: import2 [--repeat=NUM-REPEATS] [--duplicate=DUPLICATE-TAG-NAME:NUM-DUPLICATES] path [more paths] [--noimport] [--print] [--mem]");
 		System.err.print(argp.usage());
 		System.err.println("This tool can directly read gzip'ed input files.");
 		System.exit(-1);
@@ -77,6 +77,7 @@ final class TextImporter2 {
 			return false;
 		}
 
+		// handle --duplicate
 		if (argp.has("--duplicate")) {
 			final String duplicate = argp.get("--duplicate");
 			if (duplicate == null) {
@@ -122,6 +123,7 @@ final class TextImporter2 {
 		ArgP argp = new ArgP();
 		CliOptions.addCommon(argp);
 		CliOptions.addAutoMetricFlag(argp);
+		argp.addOption("--mem", "display estimated memory size of data points");
 		argp.addOption("--print", "print data points on screen");
 		argp.addOption("--noimport", "do not import data to TSDB");
 		argp.addOption("--repeat", "NUM-REPEATS", "(default 1) repeat all concatenated files NUM-REPEATS times"); 
@@ -135,12 +137,16 @@ final class TextImporter2 {
 		LOG.info("duplicates num: {} and tag {}", numDuplicates, duplicateTag);
 		LOG.info("paths: {}", Arrays.toString(args));		
 		
+		toScreen = argp.has("--print");
+		final boolean showMem = argp.has("--mem");
+		
+		final Runtime runtime = Runtime.getRuntime();
+		
+		LOG.info("preloading all files to gather FileData");
 		List<FileData> files = preloadFiles(args);
 
 		// get a config object
 		TSDB tsdb = null;
-		
-		toScreen = argp.has("--print");
 
 		if (!argp.has("--noimport")) {
 			Config config = CliOptions.getConfig(argp);
@@ -155,6 +161,8 @@ final class TextImporter2 {
 			repDuration += fd.getDuration();
 		}
 
+		if (showMem) runtime.gc();
+		
 		long start_file;
 
 		try {
@@ -162,7 +170,7 @@ final class TextImporter2 {
 
 			for (final FileData fd : files) {
 				// do not bother load in-memory if there is no repetition
-				if (numRepeats == 1) {
+				if (numRepeats == 1 && !showMem) {
 					LOG.info("Importing file {} straight into TSDB", fd.path);
 
 					fd.startAt(start_file);
@@ -170,8 +178,17 @@ final class TextImporter2 {
 				} else {
 					LOG.info("Loading file {} into memory ", fd.path);
 
+					final long usedmem = showMem ? runtime.totalMemory() -  runtime.freeMemory() : 0;
+					
 					final byte[] dp_bytes = importFile(tsdb, fd, true);
-
+					
+					if (showMem) {
+						runtime.gc();
+						
+						final long avg_dp_size = ((runtime.totalMemory() - runtime.freeMemory()) - usedmem) / fd.size;
+						LOG.info("Average datapoint size = {}", avg_dp_size);
+					}
+					
 					LOG.info("Importing {} repetitions into TSDB", numRepeats);
 
 					final long start_time = System.nanoTime();
@@ -190,9 +207,9 @@ final class TextImporter2 {
 							}
 						}
 					}
-
-					start_file += fd.getDuration();
 				}
+
+				start_file += fd.getDuration();
 
 				// we don't need to share the metricTags between files
 				metricTags.clear();
@@ -362,7 +379,7 @@ final class TextImporter2 {
 	 */
 	private static void importDataPoint(final TSDB tsdb, TimeValue dp, final FileData fd) {
 
-		final MetricTags mts = metricTags.get(dp.metricTagsId);
+		final MetricTags mts = metricTags.get(dp.getMtsIndex());
 
 		final long timestamp = fd.offsetTime(dp.timestamp);
 
@@ -515,56 +532,62 @@ final class TextImporter2 {
 		}
 	}
 
-	private static class TimeValue { // (2+8+4+1) = 15 bytes
-		public static final int SIZE = 15; // in bytes
-		public final short metricTagsId;
+	private static class TimeValue { // (2+8+4) = 14 bytes
+		public static final int SIZE = 14; // in bytes
+		
+		private final short mtsIdx;
 		public final long timestamp;
 		private final int ivalue;
-		private final boolean isfloat;
 
+		public boolean isFloat() {
+			return mtsIdx < 0;
+		}
+		
 		public String getValueString() {
-			if (isfloat)
+			if (isFloat())
 				return String.valueOf(Float.intBitsToFloat(ivalue));
 			else
 				return String.valueOf(ivalue);
 		}
 		
+		public int getMtsIndex() {
+			return mtsIdx;
+		}
+
 		public static TimeValue fromByteArray(final byte[] bytes, final int off) {
 			int cur = off * TimeValue.SIZE;
-			final short metricTagsId = Bytes.getShort(bytes, cur); cur+= 2;
+			final short mtsIdx = Bytes.getShort(bytes, cur); cur+= 2;
 			final long timestamp = Bytes.getLong(bytes, cur); cur+= 8;
-			final boolean isfloat = bytes[cur] == 1; cur++;
 			final int ivalue = Bytes.getInt(bytes, cur); cur+= 4;
 			
-			return new TimeValue(metricTagsId, timestamp, isfloat, ivalue);
+			return new TimeValue(mtsIdx, timestamp, ivalue);
 		}
-		
+
 		public static void toByteArray(final byte[] bytes, final int off, final TimeValue dp) {
 			int cur = off * TimeValue.SIZE;
-			System.arraycopy(Bytes.fromShort(dp.metricTagsId), 0, bytes, cur, 2); cur+= 2;
+			System.arraycopy(Bytes.fromShort(dp.mtsIdx), 0, bytes, cur, 2); cur+= 2;
 			System.arraycopy(Bytes.fromLong(dp.timestamp), 0, bytes, cur, 8); cur+= 8;
-			bytes[cur] = (byte) (dp.isfloat ? 1:0); cur++;
 			System.arraycopy(Bytes.fromInt(dp.ivalue), 0, bytes, cur, 4); cur+= 4;
 		}
 		
-		public TimeValue(final int metricTagsId, final long timestamp, final String value) {
-			this.metricTagsId = (short) metricTagsId;
+		public TimeValue(final int mtsIdx, final long timestamp, final String value) {
 			this.timestamp = timestamp;
 			
-			this.isfloat = !Tags.looksLikeInteger(value);
+			boolean isfloat = !Tags.looksLikeInteger(value);
 			if (isfloat) {
 				float fval = Float.parseFloat(value);
 				ivalue = Float.floatToRawIntBits(fval);
+				this.mtsIdx = (short) -this.mtsIdx;
 			} else {
 				ivalue = Integer.parseInt(value);
+				this.mtsIdx = (short) this.mtsIdx;
 			}
 		}
 
-		public TimeValue(final short metricTagsId, final long timestamp, final boolean isfloat, int ivalue) {
-			this.metricTagsId = metricTagsId;
+		public TimeValue(final short mtsIdx, final long timestamp, final int ivalue) {
+			this.mtsIdx = mtsIdx;
 			this.timestamp = timestamp;
 			this.ivalue = ivalue;
-			this.isfloat = isfloat;
 		}
 	}
 
