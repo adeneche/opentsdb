@@ -17,6 +17,8 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -245,6 +247,8 @@ final class TextImporter2 {
 		String last = null;
 		int points;
 		long t0, t1;
+		
+		final long start_time = System.nanoTime();
 
 		for (String path : paths) {
 			final BufferedReader in = open(path);
@@ -268,6 +272,9 @@ final class TextImporter2 {
 				while ((line = in.readLine()) != null) {
 					last = line;
 					points++;
+					if (points % 1000000 == 0) {
+						displayAvgSpeed(start_time, points);
+					}
 				}
 
 				// process last line
@@ -282,13 +289,34 @@ final class TextImporter2 {
 
 				final FileData fd = new FileData(path, t0, t1, points);
 				LOG.info("file {}: t0= {}, t1= {}, size={}, interval={}, duration={}", fd.path, fd.t0, fd.t1, fd.size, fd.getInterval(), fd.getDuration());
-				files.add(fd);
+				files.add(fd);				
 			} catch (RuntimeException e) {
 				LOG.error("Exception caught while processing file "	+ path + " line=" + line);
 				throw e;
 			} finally {
 				in.close();
 			}
+			
+			// now try to load the same file using a FileChannel + ByteBuffer
+			final FileInputStream fis = new FileInputStream(path);
+			final FileChannel fc = fis.getChannel();
+			final ByteBuffer bb = ByteBuffer.allocate(1024*8);
+
+			final long bb_start_time = System.nanoTime();
+			
+			while (fc.read(bb) > 0) {
+				bb.flip();
+				// no need to read the bytes
+				for (int i = 0; i < bb.limit(); i++) {
+            bb.get();
+        }
+				bb.clear();
+			}
+			
+			displayAvgSpeed(bb_start_time, points);
+			
+			fc.close();
+			fis.close();
 
 		}
 
