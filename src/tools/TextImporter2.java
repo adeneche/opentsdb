@@ -205,13 +205,14 @@ final class TextImporter2 {
 					LOG.info("Importing {} repetitions into TSDB", numRepeats);
 
 					final long start_time = System.nanoTime();
-
+					final TimeValue dp = new TimeValue();
+					
 					int points = 0;
 					for (int rep = 0; rep < numRepeats; rep++) {
 						fd.startAt(start_file + rep * repDuration);
 
 						for (int i = 0; i < fd.size; i++) {
-							final TimeValue dp = TimeValue.fromByteArray(dp_bytes, i);
+							/*final TimeValue dp =*/ TimeValue.fromByteArray(dp_bytes, i, dp);
 							importDataPoint(tsdb, dp, fd);
 							
 							points+= numDuplicates;
@@ -574,9 +575,9 @@ final class TextImporter2 {
 	private static class TimeValue { // (2+8+4) = 14 bytes
 		public static final int SIZE = 14; // in bytes
 		
-		private final short mtsIdx;
-		public final long timestamp;
-		private final int ivalue;
+		private short mtsIdx;
+		public long timestamp;
+		private int ivalue;
 
 		public boolean isFloat() {
 			return mtsIdx < 0;
@@ -593,13 +594,13 @@ final class TextImporter2 {
 			return mtsIdx;
 		}
 
-		public static TimeValue fromByteArray(final byte[] bytes, final int off) {
+		public static void fromByteArray(final byte[] bytes, final int off, final TimeValue dp) {
 			int cur = off * TimeValue.SIZE;
-			final short mtsIdx = Bytes.getShort(bytes, cur); cur+= 2;
-			final long timestamp = Bytes.getLong(bytes, cur); cur+= 8;
-			final int ivalue = Bytes.getInt(bytes, cur); cur+= 4;
+			dp.mtsIdx = Bytes.getShort(bytes, cur); cur+= 2;
+			dp.timestamp = Bytes.getLong(bytes, cur); cur+= 8;
+			dp.ivalue = Bytes.getInt(bytes, cur); cur+= 4;
 			
-			return new TimeValue(mtsIdx, timestamp, ivalue);
+			//return new TimeValue(mtsIdx, timestamp, ivalue);
 		}
 
 		public static void toByteArray(final byte[] bytes, final int off, final TimeValue dp) {
@@ -622,11 +623,14 @@ final class TextImporter2 {
 				this.mtsIdx = (short) this.mtsIdx;
 			}
 		}
-
+/*
 		public TimeValue(final short mtsIdx, final long timestamp, final int ivalue) {
 			this.mtsIdx = mtsIdx;
 			this.timestamp = timestamp;
 			this.ivalue = ivalue;
+		}
+*/		
+		public TimeValue() {
 		}
 	}
 
