@@ -1,4 +1,5 @@
-## fast import
+Fast import
+===========
 
 The import2 command enables bulk loading of time series data into OpenTSDB. It is based on the [import](http://opentsdb.net/docs/build/html/user_guide/cli/import.html) CLI tool but uses an advanced cached batching mechanism to speedup the loading. You provide one or more files and the tool will parse and load the data. Data must be formatted in the Telnet put style with one data point per line in a text file. Each file may be optionally be compressed with GZip and if so, must end with the .gz extension.
 
