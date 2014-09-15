@@ -423,7 +423,7 @@ final class TextImporter2 {
 
 		final long timestamp = fd.offsetTime(dp.timestamp);
 
-		final HashMap<String, String> tags = new HashMap<String, String>(mts.tags);
+		HashMap<String, String> tags = mts.tags;
 
 		for (int d = 0; d < numDuplicates; d++) {
 			if (numDuplicates > 1) {
@@ -551,9 +551,9 @@ final class TextImporter2 {
 
 	private static class MetricTags {
 		public final String metric;
-		public final Map<String, String> tags;
+		public final HashMap<String, String> tags;
 
-		public MetricTags(final String metric, final Map<String, String> tags) {
+		public MetricTags(final String metric, final HashMap<String, String> tags) {
 			this.metric = metric;
 			this.tags = tags;
 		}
