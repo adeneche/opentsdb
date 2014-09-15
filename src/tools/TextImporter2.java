@@ -44,6 +44,8 @@ final class TextImporter2 {
 	private static int numDuplicates = 1;
 	private static String duplicateTag = "";
 	
+	private static int bufferSize = 8;
+	
 	private static boolean toScreen;
 
 	private static final List<MetricTags> metricTags = new ArrayList<MetricTags>();
@@ -130,6 +132,7 @@ final class TextImporter2 {
 		argp.addOption("--noimport", "do not import data to TSDB");
 		argp.addOption("--repeat", "NUM-REPEATS", "(default 1) repeat all concatenated files NUM-REPEATS times"); 
 		argp.addOption("--duplicate", "DUPLICATE-TAG-NAME:NUM-DUPLICATES", "duplicate each data points NUM-DUPLICATES while using TAG-NAME as a tag");
+		argp.addOption("--buffer", "SIZE", "size of byte buffer in KiloOctets");
 		args = CliOptions.parse(argp, args);
 		if (args == null || args.length < 1 || !parseParams(argp)) {
 			usage(argp);
@@ -138,6 +141,14 @@ final class TextImporter2 {
 		LOG.info("repeat num: {}", numRepeats);
 		LOG.info("duplicates num: {} and tag {}", numDuplicates, duplicateTag);
 		LOG.info("paths: {}", Arrays.toString(args));		
+		
+		if (argp.has("--buffer")) {
+			bufferSize = Integer.parseInt(argp.get("--buffer"));
+			if (bufferSize <= 0) {
+				System.err.println("buffer size must be greater than 0");
+				usage(argp);
+			}
+		}
 		
 		toScreen = argp.has("--print");
 		final boolean showMem = argp.has("--mem");
@@ -300,7 +311,7 @@ final class TextImporter2 {
 			// now try to load the same file using a FileChannel + ByteBuffer
 			final FileInputStream fis = new FileInputStream(path);
 			final FileChannel fc = fis.getChannel();
-			final ByteBuffer bb = ByteBuffer.allocate(1024*8);
+			final ByteBuffer bb = ByteBuffer.allocate(1024*bufferSize);
 
 			final long bb_start_time = System.nanoTime();
 			
