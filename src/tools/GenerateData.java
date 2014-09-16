@@ -35,6 +35,7 @@ public class GenerateData {
 		argp.addOption("--range", "RANGE", "(default 101) value += random(range) - gap");
 		argp.addOption("--gap", "GAP", "(default 50) value += random(range) - gap");
 		argp.addOption("--compress", "[optional] compress generated file");
+		argp.addOption("--csv", "[optional] generate CSV file");
 		if (args.length < 2) {
 			usage(argp);
 		}
@@ -55,7 +56,8 @@ public class GenerateData {
 		int pph = Integer.parseInt(argp.get("--pph", "3600"));
 		int range = Integer.parseInt(argp.get("--range", "101"));
 		int gap = Integer.parseInt(argp.get("--gap", "50"));
-
+		boolean csv = argp.has("--csv");
+		
 		if (pph <= 0) {
 			System.err.println("pph must be a positive number");
 			System.exit(-1);
@@ -64,15 +66,16 @@ public class GenerateData {
 		LOG.info("Generating {} years starting from year {}, for metric {} with {} points per hour", totalYears, startYear, metricName, pph);
 		LOG.info("Generating {} metrics with {} tags and {} values for each tag", numMetrics, numTagK, numTagV);
 
-		generateYearlyFiles(useCompression, metricName, numMetrics, numTagK, numTagV, startYear, totalYears, days, pph, range, gap, new Random());
+		generateYearlyFiles(useCompression, metricName, numMetrics, numTagK, numTagV, startYear, totalYears, days, pph, range, gap, new Random(), csv);
 	}
 
-	public static void generateYearlyFiles(final boolean useCompression, final String metricName, final int numMetrics, final int numTagK, final int numTagV, final int startYear, final int totalYears, final int days, final int pph, final int range, final int gap, final Random rand) throws IOException {
+	public static void generateYearlyFiles(final boolean useCompression, final String metricName, final int numMetrics, final int numTagK, final int numTagV, final int startYear, final int totalYears, final int days, final int pph, final int range, final int gap, final Random rand, final boolean csv) throws IOException {
 		//TODO add timezone (--tz) param to argp
 		Calendar cal = Calendar.getInstance(); // use local timezone
 		cal.set(startYear, 0, 1, 0, 0, 0);
 
-		String extension = useCompression ? ".tsd.gz" : ".tsd";
+		String extension = csv ? ".csv" : ".tsd";
+		if (useCompression) extension += ".gz";
 
 		long value = rand.nextInt(range) - gap;
 		long count = 0;
@@ -101,7 +104,10 @@ public class GenerateData {
 							
 							final String mname = metricName + ((numMetrics > 1) ? "." + rand.nextInt(numMetrics) : "");
 							
-							writeRecord(os, mname, time, value, tagValues);
+							if (csv)
+								writeRecordCSV(os, mname, time, value, tagValues);
+							else
+								writeRecord(os, mname, time, value, tagValues);
 							
 							// Alter the value by a range of +/- RANDOM_GAP
 							value += rand.nextInt(range) - gap;
@@ -145,6 +151,29 @@ public class GenerateData {
 			.append("=")
 			.append("value")
 			.append(tagValues[v]);
+		}
+		
+		record.append("\n");
+		
+		os.write(record.toString().getBytes());
+	}
+
+	private static void writeRecordCSV(final OutputStream os, final String metricName, final long time, final long value, final int[] tagValues) throws IOException {
+		StringBuffer record = new StringBuffer();
+		record.append('"').append(metricName).append('"')
+		.append(", ")
+		.append(time)
+		.append(", ")
+		.append(value);
+		
+		for (int v = 0; v < tagValues.length; v++) {
+			record.append(", \"")
+			.append("tag")
+			.append(v)
+			.append("=")
+			.append("value")
+			.append(tagValues[v])
+			.append('"');
 		}
 		
 		record.append("\n");

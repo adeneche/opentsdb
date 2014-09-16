@@ -14,16 +14,18 @@ package net.opentsdb.tools;
 
 import java.io.BufferedReader;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.zip.GZIPInputStream;
 
 import net.opentsdb.core.CachedBatches;
@@ -43,9 +45,9 @@ final class TextImporter2 {
 	private static int numRepeats = 1;
 	private static int numDuplicates = 1;
 	private static String duplicateTag = "";
-	
+
 	private static int bufferSize = 8;
-	
+
 	private static boolean toScreen;
 
 	private static final List<MetricTags> metricTags = new ArrayList<MetricTags>();
@@ -57,7 +59,7 @@ final class TextImporter2 {
 		System.err.println("This tool can directly read gzip'ed input files.");
 		System.exit(-1);
 	}
-	
+
 	private static boolean parseParams(ArgP argp) {
 
 		// handle repeat argument
@@ -67,7 +69,7 @@ final class TextImporter2 {
 				System.err.println("--repeat is missing NUM-REPEATS");
 				return false;
 			}
-			
+
 			try {
 				numRepeats = Integer.parseInt(repeat);
 			} catch (NumberFormatException e) {
@@ -75,7 +77,7 @@ final class TextImporter2 {
 				return false;
 			}
 		}
-		
+
 		if (numRepeats < 1) {
 			System.err.println("NUM-REPEATS must be greater than 0");
 			return false;
@@ -99,14 +101,14 @@ final class TextImporter2 {
 			}
 
 			duplicateTag = duplicate.substring(0, idx);
-			
+
 			try {
 				Tags.validateString("DUPLICATE-TAG-NAME", duplicateTag);
 			} catch (IllegalArgumentException e) {
 				System.err.println("DUPLICATE-TAG-NAME is not a valid tag name");
 				return false;
 			}
-			
+
 			try {
 				numDuplicates = Integer.parseInt(duplicate.substring(idx+1));
 			} catch (NumberFormatException e) {
@@ -119,10 +121,10 @@ final class TextImporter2 {
 			System.err.println("NUM-DUPLICATES must be greater than 0");
 			return false;
 		}
-		
+
 		return true;
 	}
-	
+
 	public static void main(String[] args) throws Exception {
 		ArgP argp = new ArgP();
 		CliOptions.addCommon(argp);
@@ -141,7 +143,7 @@ final class TextImporter2 {
 		LOG.info("repeat num: {}", numRepeats);
 		LOG.info("duplicates num: {} and tag {}", numDuplicates, duplicateTag);
 		LOG.info("paths: {}", Arrays.toString(args));		
-		
+
 		if (argp.has("--buffer")) {
 			bufferSize = Integer.parseInt(argp.get("--buffer"));
 			if (bufferSize <= 0) {
@@ -149,12 +151,12 @@ final class TextImporter2 {
 				usage(argp);
 			}
 		}
-		
+
 		toScreen = argp.has("--print");
 		final boolean showMem = argp.has("--mem");
-		
+
 		final Runtime runtime = Runtime.getRuntime();
-		
+
 		LOG.info("preloading all files to gather FileData");
 		List<FileData> files = preloadFiles(args);
 
@@ -175,7 +177,7 @@ final class TextImporter2 {
 		}
 
 		if (showMem) runtime.gc();
-		
+
 		long start_file;
 
 		try {
@@ -192,21 +194,21 @@ final class TextImporter2 {
 					LOG.info("Loading file {} into memory ", fd.path);
 
 					final long usedmem = showMem ? runtime.totalMemory() -  runtime.freeMemory() : 0;
-					
+
 					final byte[] dp_bytes = importFile(tsdb, fd, true);
-					
+
 					if (showMem) {
 						runtime.gc();
-						
+
 						final long avg_dp_size = ((runtime.totalMemory() - runtime.freeMemory()) - usedmem) / fd.size;
 						LOG.info("Average datapoint size = {}", avg_dp_size);
 					}
-					
+
 					LOG.info("Importing {} repetitions into TSDB", numRepeats);
 
 					final long start_time = System.nanoTime();
 					final TimeValue dp = new TimeValue();
-					
+
 					int points = 0;
 					for (int rep = 0; rep < numRepeats; rep++) {
 						fd.startAt(start_file + rep * repDuration);
@@ -214,7 +216,7 @@ final class TextImporter2 {
 						for (int i = 0; i < fd.size; i++) {
 							/*final TimeValue dp =*/ TimeValue.fromByteArray(dp_bytes, i, dp);
 							importDataPoint(tsdb, dp, fd);
-							
+
 							points+= numDuplicates;
 							if (points % 1000000 == 0) {
 								displayAvgSpeed(start_time, points);
@@ -259,12 +261,17 @@ final class TextImporter2 {
 		String last = null;
 		int points;
 		long t0, t1;
-		
+
 		final long start_time = System.nanoTime();
 
 		for (String path : paths) {
-			final BufferedReader in = open(path);
 
+			// now try to load the same file using a FileChannel + ByteBuffer
+			LOG.info("Reading lines using FileChannel+ByteBuffer");
+			preloadFileByteBuffer(path);
+
+			final BufferedReader in = open(path);
+			
 			try {
 				// process first line to extract t0
 				line = in.readLine();
@@ -275,6 +282,8 @@ final class TextImporter2 {
 					in.close();
 					continue;
 				}
+				
+				int maxlen = line.length();
 
 				t0 = Long.parseLong(Tags.splitString(line, ' ')[1]);
 				points = 1;
@@ -282,6 +291,8 @@ final class TextImporter2 {
 				// TODO assuming all data points of a file have the same tags, check if duplicate tag isn't in the first line
 
 				while ((line = in.readLine()) != null) {
+					if (line.length() > maxlen) maxlen = line.length();
+					
 					last = line;
 					points++;
 					if (points % 1000000 == 0) {
@@ -299,6 +310,7 @@ final class TextImporter2 {
 
 				t1 = Long.parseLong(Tags.splitString(last, ' ')[1]);
 
+				LOG.info("Longest line contains {} chars", maxlen);
 				final FileData fd = new FileData(path, t0, t1, points);
 				LOG.info("file {}: t0= {}, t1= {}, size={}, interval={}, duration={}", fd.path, fd.t0, fd.t1, fd.size, fd.getInterval(), fd.getDuration());
 				files.add(fd);				
@@ -308,31 +320,81 @@ final class TextImporter2 {
 			} finally {
 				in.close();
 			}
-			
+
 			// now try to load the same file using a FileChannel + ByteBuffer
-			final FileInputStream fis = new FileInputStream(path);
-			final FileChannel fc = fis.getChannel();
-			final ByteBuffer bb = ByteBuffer.allocate(1024*bufferSize);
-
-			final long bb_start_time = System.nanoTime();
-			
-			while (fc.read(bb) > 0) {
-				bb.flip();
-				// no need to read the bytes
-				for (int i = 0; i < bb.limit(); i++) {
-            bb.get();
-        }
-				bb.clear();
-			}
-			
-			displayAvgSpeed(bb_start_time, points);
-			
-			fc.close();
-			fis.close();
-
+			LOG.info("Reading lines using FileChannel+ByteBuffer");
+			preloadFileByteBuffer(path);
 		}
 
 		return files;
+	}
+
+	private static void preloadFileByteBuffer(String path, int size) throws IOException {
+		final FileInputStream fis = new FileInputStream(path);
+		final FileChannel fc = fis.getChannel();
+		final ByteBuffer bb = ByteBuffer.allocate(1024*bufferSize);
+
+		final long bb_start_time = System.nanoTime();
+
+		while (fc.read(bb) > 0) {
+			bb.flip();
+			// no need to read the bytes
+			for (int i = 0; i < bb.limit(); i++) {
+				bb.get();
+			}
+			bb.clear();
+		}
+
+		displayAvgSpeed(bb_start_time, size);
+
+		fc.close();
+		fis.close();
+	}
+
+	private static void preloadFileByteBuffer(String path) throws IOException {
+		final FileInputStream fis = new FileInputStream(path);
+		final FileChannel fc = fis.getChannel();
+		final ByteBuffer bb = ByteBuffer.allocate(1024*bufferSize);
+		Charset encoding = Charset.forName(System.getProperty("file.encoding"));
+		
+		int points = 3144960;
+		final char[] line = new char[1024]; 
+		int nextChar = 0;
+		boolean skipLF = false;
+
+		final long start_time = System.nanoTime();
+
+		while (fc.read(bb) > 0) {
+//			LOG.info("reading ByteBuffer block");
+			bb.flip();
+			
+			final CharBuffer cb = encoding.decode(bb);
+/*
+			for (int i = 0; i < cb.limit(); i++) {
+				char c = cb.get();
+
+				if (c == '\n' && skipLF) { // ignore this '\n'
+					skipLF = false;
+				} else if (c == '\n' || c == '\r') {
+					// handle line[0..nextChar[
+					nextChar = 0;
+					points++;
+
+					if (c == '\r') {
+						skipLF = true;
+					}
+				} else {
+					line[nextChar++] = c;
+				}
+			}
+*/
+			bb.clear();
+		}
+
+		displayAvgSpeed(start_time, points);
+
+		fc.close();
+		fis.close();
 	}
 	/**
 	 * Imports a given file into: memory if inMem is true or to TSDB
@@ -352,12 +414,12 @@ final class TextImporter2 {
 		}
 
 		final long start_time = System.nanoTime();
-		
+
 		try {
 			while ((line = in.readLine()) != null) {
 				final String[] words = Tags.splitString(line, ' ');
 				final TimeValue dp = processLine(words);
-				
+
 				if (inMem) {
 					TimeValue.toByteArray(dp_bytes, points, dp);
 				}
@@ -366,7 +428,7 @@ final class TextImporter2 {
 				}
 
 				points++;
-				
+
 				if (points % 1000000 == 0) {
 					displayAvgSpeed(start_time, points);
 				}
@@ -439,7 +501,7 @@ final class TextImporter2 {
 			}
 		}
 	}
-	
+
 	private static void logDataPoint(final String metric, final long timestamp, final String value, final HashMap<String, String> tags) {
 		final StringBuilder buf = new StringBuilder();
 
@@ -448,14 +510,14 @@ final class TextImporter2 {
 		.append(DumpSeries.date(timestamp))
 		.append(' ')
 		.append(value);
-		
+
 		for (String tag : tags.keySet()) {
 			buf.append(' ')
 			.append(tag)
 			.append('=')
 			.append(tags.get(tag));
 		}
-		
+
 		LOG.info(buf.toString());
 	}
 
@@ -574,7 +636,7 @@ final class TextImporter2 {
 
 	private static class TimeValue { // (2+8+4) = 14 bytes
 		public static final int SIZE = 14; // in bytes
-		
+
 		private short mtsIdx;
 		public long timestamp;
 		private int ivalue;
@@ -582,14 +644,14 @@ final class TextImporter2 {
 		public boolean isFloat() {
 			return mtsIdx < 0;
 		}
-		
+
 		public String getValueString() {
 			if (isFloat())
 				return String.valueOf(Float.intBitsToFloat(ivalue));
 			else
 				return String.valueOf(ivalue);
 		}
-		
+
 		public int getMtsIndex() {
 			return mtsIdx;
 		}
@@ -599,7 +661,7 @@ final class TextImporter2 {
 			dp.mtsIdx = Bytes.getShort(bytes, cur); cur+= 2;
 			dp.timestamp = Bytes.getLong(bytes, cur); cur+= 8;
 			dp.ivalue = Bytes.getInt(bytes, cur); cur+= 4;
-			
+
 			//return new TimeValue(mtsIdx, timestamp, ivalue);
 		}
 
@@ -609,10 +671,10 @@ final class TextImporter2 {
 			System.arraycopy(Bytes.fromLong(dp.timestamp), 0, bytes, cur, 8); cur+= 8;
 			System.arraycopy(Bytes.fromInt(dp.ivalue), 0, bytes, cur, 4); cur+= 4;
 		}
-		
+
 		public TimeValue(final int mtsIdx, final long timestamp, final String value) {
 			this.timestamp = timestamp;
-			
+
 			boolean isfloat = !Tags.looksLikeInteger(value);
 			if (isfloat) {
 				float fval = Float.parseFloat(value);
@@ -623,13 +685,13 @@ final class TextImporter2 {
 				this.mtsIdx = (short) this.mtsIdx;
 			}
 		}
-/*
+		/*
 		public TimeValue(final short mtsIdx, final long timestamp, final int ivalue) {
 			this.mtsIdx = mtsIdx;
 			this.timestamp = timestamp;
 			this.ivalue = ivalue;
 		}
-*/		
+		 */		
 		public TimeValue() {
 		}
 	}

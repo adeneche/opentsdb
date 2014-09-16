@@ -79,6 +79,9 @@ case $1 in
   (generate)
     MAINCLASS=GenerateData
     ;;
+  (testspeed)
+    MAINCLASS=TestSpeed
+    ;;
   (mkmetric)
     shift
     set uid assign metrics "$@"

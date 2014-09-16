@@ -75,6 +75,7 @@ tsdb_SRC := \
 	src/tools/TSDMain.java	\
 	src/tools/TextImporter.java	\
 	src/tools/TextImporter2.java	\
+	src/tools/TestSpeed.java \
 	src/tools/TreeSync.java	\
 	src/tools/UidManager.java	\
 	src/tree/Branch.java	\
