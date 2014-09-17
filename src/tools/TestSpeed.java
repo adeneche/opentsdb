@@ -26,17 +26,19 @@ public class TestSpeed {
 	public static void main(String[] args) throws IOException {
 		
 		if (args.length == 0) {
-			System.err.println("usage speedtest [buffer BUFFER-SIZE] [channel BUFFER-SIZE [NUM-LINES]] [channel2 BUFFER-SIZE [BYTES-SIZE] NUM-LINES] [channel_direct BUFFER-SIZE [BYTES-SIZE] NUM-LINES] path");
+			System.err.println("usage speedtest [buffer BUFFER-SIZE] [ (channel | channel_direct) BUFFER-SIZE [NUM-LINES]] [ (channel2 | channel2_direct) BUFFER-SIZE [BYTES-SIZE] NUM-LINES] path");
 			System.exit(-1);
 		}
 		
 		if (args[0].equals("buffer")) {
 			readBuffer(args);
 		} else if (args[0].equals("channel")) {
-			readChannel(args);
+			readChannel(args, false);
+		} else if (args[0].equals("channel_direct")) {
+			readChannel(args, true);
 		} else if (args[0].equals("channel2")){
 			readChannel2(args, false);
-		} else if (args[0].equals("channel_direct")) {
+		} else if (args[0].equals("channel2_direct")) {
 			readChannel2(args, true);
 		}
 
@@ -68,24 +70,25 @@ public class TestSpeed {
 		in.close();
 	}
 	
-	private static void readChannel(final String[] args) throws IOException {
+	private static void readChannel(final String[] args, final boolean direct) throws IOException {
 		System.out.println("using FileChannel with charset decoding...");
 		
 		if (args.length < 3) return;
 		
-		final int bufferSize = Integer.parseInt(args[1]); // in Koctets
+		int curArg = 1;
+		final int bufferSize = Integer.parseInt(args[curArg++]); // in Koctets
 		if (bufferSize <= 0) return;
 		
-		final int numLines = (args.length > 3) ? Integer.parseInt(args[2]) : 0;
+		final int numLines = (args.length > 3) ? Integer.parseInt(args[curArg++]) : 0;
 		if (numLines < 0) return;
 		
-		final String path = (args.length > 3) ? args[3] : args[2];
+		final String path = args[curArg++];
 
 		final FileInputStream fis = new FileInputStream(path);
 		final FileChannel fc = fis.getChannel();
-		final ByteBuffer bb = ByteBuffer.allocate(1024*bufferSize);
+		//TODO compare between allocate and allocateDirect
+		final ByteBuffer bb = direct ? ByteBuffer.allocateDirect(1024*bufferSize) : ByteBuffer.allocate(1024*bufferSize);
 		Charset encoding = Charset.defaultCharset();
-		final char[] charbuffer = new char[1024*bufferSize];
 		
 		final char[] line = new char[1024]; 
 		int nextChar = 0;
@@ -103,20 +106,12 @@ public class TestSpeed {
 			total += bb.limit();
 			
 			final CharBuffer cb = encoding.decode(bb);
+			numChars = cb.limit();
 			
 			if (numLines == 0) {
-//				LOG.info("charbuffer length {}, char[] length {}", cb.limit(), charbuffer.length);
-				
-				if (charbuffer.length <= cb.limit()) {
-					cb.get(charbuffer);
-					numChars = charbuffer.length;
-				} else {
-					numChars = cb.limit();
-					cb.get(charbuffer, 0, cb.limit());
-				}
 				
 				for (int i = 0; i < numChars; i++) {
-					char c = charbuffer[i];
+					char c = cb.get();
 
 					if (c == '\n' && skipLF) { // ignore this '\n'
 						skipLF = false;
