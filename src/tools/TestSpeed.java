@@ -72,7 +72,8 @@ public class TestSpeed {
 	
 	private static void readChannel(final String[] args, final boolean direct) throws IOException {
 		System.out.println("using FileChannel with charset decoding...");
-		
+		if (direct) System.out.println("using allocateDirect...");
+
 		if (args.length < 3) return;
 		
 		int curArg = 1;
