@@ -26,17 +26,18 @@ public class TestSpeed {
 	public static void main(String[] args) throws IOException {
 		
 		if (args.length == 0) {
-			System.err.println("usage speedtest [buffer BUFFER-SIZE] [channel BUFFER-SIZE [NUM-LINES]] [channel2 BUFFER-SIZE NUM-LINES] path");
+			System.err.println("usage speedtest [buffer BUFFER-SIZE] [channel BUFFER-SIZE [NUM-LINES]] [channel2 BUFFER-SIZE [BYTES-SIZE] NUM-LINES] [channel_direct BUFFER-SIZE [BYTES-SIZE] NUM-LINES] path");
 			System.exit(-1);
 		}
 		
 		if (args[0].equals("buffer")) {
 			readBuffer(args);
-			
 		} else if (args[0].equals("channel")) {
 			readChannel(args);
 		} else if (args[0].equals("channel2")){
-			readChannel2(args);
+			readChannel2(args, false);
+		} else if (args[0].equals("channel_direct")) {
+			readChannel2(args, true);
 		}
 
 	}
@@ -94,8 +95,12 @@ public class TestSpeed {
 
 		final long start_time = System.nanoTime();
 
+		int total = 0;
+		
 		while (fc.read(bb) > 0) {
 			bb.flip();
+			
+			total += bb.limit();
 			
 			final CharBuffer cb = encoding.decode(bb);
 			
@@ -134,44 +139,63 @@ public class TestSpeed {
 
 		if (numLines > 0) points = numLines;
 		
+		System.out.println("Total Bytes read: "+total);
 		displayAvgSpeed(start_time, points);
 
 		fc.close();
 		fis.close();
 	}
 	
-	private static void readChannel2(final String[] args) throws IOException {
+	private static void readChannel2(final String[] args, final boolean direct) throws IOException {
 		System.out.println("using FileChannel without charset decoding...");
+		if (direct) System.out.println("using allocateDirect...");
 		
 		if (args.length < 4) return;
 		
-		final int bufferSize = Integer.parseInt(args[1]); // in Koctets
+		int curArg = 1;
+		
+		final int bufferSize = Integer.parseInt(args[curArg++]); // in Koctets
 		if (bufferSize <= 0) return;
 		
-		final int numLines = Integer.parseInt(args[2]);
+		final int numBytes = args.length < 5 ? bufferSize : Integer.parseInt(args[curArg++]);
+		
+		final int numLines = Integer.parseInt(args[curArg++]);
 		if (numLines < 0) return;
 		
-		final String path = args[3];
+		final String path = args[curArg++];
 
 		final FileInputStream fis = new FileInputStream(path);
 		final FileChannel fc = fis.getChannel();
-		final ByteBuffer bb = ByteBuffer.allocate(1024*bufferSize);
-		final byte[] bytes = new byte[1024*bufferSize];
+		final ByteBuffer bb = direct ? ByteBuffer.allocateDirect(1024*bufferSize) : ByteBuffer.allocate(1024*bufferSize);
+		final byte[] bytes = new byte[1024*numBytes];
 		//TODO try a different size for the bytes array
 		
 		final long start_time = System.nanoTime();
-
+		int total = 0;
+		
 		while (fc.read(bb) > 0) {
 			bb.flip();
 			
-			if (bytes.length > bb.limit())
-				bb.get(bytes, 0, bb.limit());
-			else
-				bb.get(bytes);
+			int offset = 0;
+			int avail = bb.limit();
+			
+			while (offset < avail) {
+				if ((offset + bytes.length) > avail) {
+					bb.get(bytes, 0, avail - offset);
+					total += avail - offset;
+					offset = avail;
+				}
+				else {
+					bb.get(bytes);
+					total += bytes.length;
+					offset += bytes.length;
+				}
+			}
 
 			bb.clear();
 		}
 		
+		System.out.println("Total Bytes read: "+total);
 		displayAvgSpeed(start_time, numLines);
 
 		fc.close();
