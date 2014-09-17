@@ -84,9 +84,11 @@ public class TestSpeed {
 		final FileChannel fc = fis.getChannel();
 		final ByteBuffer bb = ByteBuffer.allocate(1024*bufferSize);
 		Charset encoding = Charset.defaultCharset();
-
+		final char[] charbuffer = new char[1024*bufferSize];
+		
 		final char[] line = new char[1024]; 
 		int nextChar = 0;
+		int numChars = 0;
 		boolean skipLF = false;
 		int points = 0;
 
@@ -96,10 +98,20 @@ public class TestSpeed {
 			bb.flip();
 			
 			final CharBuffer cb = encoding.decode(bb);
-
+			
 			if (numLines == 0) {
-				for (int i = 0; i < cb.limit(); i++) {
-					char c = cb.get();
+//				LOG.info("charbuffer length {}, char[] length {}", cb.limit(), charbuffer.length);
+				
+				if (charbuffer.length <= cb.limit()) {
+					cb.get(charbuffer);
+					numChars = charbuffer.length;
+				} else {
+					numChars = cb.limit();
+					cb.get(charbuffer, 0, cb.limit());
+				}
+				
+				for (int i = 0; i < numChars; i++) {
+					char c = charbuffer[i];
 
 					if (c == '\n' && skipLF) { // ignore this '\n'
 						skipLF = false;
@@ -145,6 +157,7 @@ public class TestSpeed {
 		final FileChannel fc = fis.getChannel();
 		final ByteBuffer bb = ByteBuffer.allocate(1024*bufferSize);
 		final byte[] bytes = new byte[1024*bufferSize];
+		//TODO try a different size for the bytes array
 		
 		final long start_time = System.nanoTime();
 
