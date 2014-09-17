@@ -13,42 +13,47 @@ import java.nio.charset.Charset;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Simple tool to test how fast various strategies for loading files into memory.
+ * - BufferedReader + readLine()
+ * - FileChannel + ByteBuffer
+ * - ...
+ */
 public class TestSpeed {
 
 	private static final Logger LOG = LoggerFactory.getLogger(TestSpeed.class);
 
-	private static void usage(final ArgP argp) {
-		System.err.println("Usage: testspeed [--bb=SIZE] [--buffer=SIZE] [--lines] path");
-		System.err.print(argp.usage());
-		System.exit(-1);
-	}
-
 	public static void main(String[] args) throws IOException {
-		// TODO Auto-generated method stub
-		ArgP argp = new ArgP();
-		argp.addOption("--bb", "use byte buffer. SIZE is the number of lines in the file");
-		argp.addOption("--buffer", "SIZE", "(default 64) size of ByteBuffer in Koctets");
 		
-		args = CliOptions.parse(argp, args);
-		if (args == null || args.length < 1) {
-			usage(argp);
+		if (args.length == 0) {
+			System.err.println("usage speedtest [buffer BUFFER-SIZE] [channel BUFFER-SIZE [NUM-LINES]] path");
+			System.exit(-1);
 		}
 		
-		final String path = args[0];
-		final boolean useByteBuffer = argp.has("--bb");
-		
-		if (useByteBuffer) {
-			final int numLines = argp.get("--bb") != null ? Integer.parseInt(argp.get("--bb")) : 0;
-			final int bufferSize = Integer.parseInt(argp.get("--buffer", "64"));
-			readWithBB(path, numLines, bufferSize);
+		if (args[0].equals("buffer")) {
+			readBuffer(args);
+			
+		} else if (args[0].equals("channel")) {
+			readChannel(args);
+			
 		} else {
-			readWithBR(path);
+			
 		}
+
 	}
 	
-	private static void readWithBR(final String path) throws IOException {
+	private static void readBuffer(final String[] args) throws IOException {
+		System.out.println("using BufferedReader...");
+		
+		if (args.length < 3) return;
+		
+		final int bufferSize = Integer.parseInt(args[1]); // in Koctets
+		if (bufferSize <= 0) return;
+		
+		final String path = args[2];
+		
 		InputStream is = new FileInputStream(path);
-		BufferedReader in = new BufferedReader(new InputStreamReader(is));
+		BufferedReader in = new BufferedReader(new InputStreamReader(is), bufferSize*1024);
 		
 		String line = null;
 		int numLines = 0;
@@ -63,11 +68,23 @@ public class TestSpeed {
 		in.close();
 	}
 	
-	private static void readWithBB(final String path, final int numLines, final int bufferSize) throws IOException {
+	private static void readChannel(final String[] args) throws IOException {
+		System.out.println("using FileChannel...");
+		
+		if (args.length < 3) return;
+		
+		final int bufferSize = Integer.parseInt(args[1]); // in Koctets
+		if (bufferSize <= 0) return;
+		
+		final int numLines = (args.length > 3) ? Integer.parseInt(args[2]) : 0;
+		if (numLines < 0) return;
+		
+		final String path = (args.length > 3) ? args[3] : args[2];
+
 		final FileInputStream fis = new FileInputStream(path);
 		final FileChannel fc = fis.getChannel();
 		final ByteBuffer bb = ByteBuffer.allocate(1024*bufferSize);
-		Charset encoding = Charset.forName(System.getProperty("file.encoding"));
+		Charset encoding = Charset.defaultCharset();
 
 		final char[] line = new char[1024]; 
 		int nextChar = 0;
