@@ -26,7 +26,7 @@ public class TestSpeed {
 	public static void main(String[] args) throws IOException {
 		
 		if (args.length == 0) {
-			System.err.println("usage speedtest [buffer BUFFER-SIZE] [channel BUFFER-SIZE [NUM-LINES]] path");
+			System.err.println("usage speedtest [buffer BUFFER-SIZE] [channel BUFFER-SIZE [NUM-LINES]] [channel2 BUFFER-SIZE NUM-LINES] path");
 			System.exit(-1);
 		}
 		
@@ -35,9 +35,8 @@ public class TestSpeed {
 			
 		} else if (args[0].equals("channel")) {
 			readChannel(args);
-			
-		} else {
-			
+		} else if (args[0].equals("channel2")){
+			readChannel2(args);
 		}
 
 	}
@@ -69,7 +68,7 @@ public class TestSpeed {
 	}
 	
 	private static void readChannel(final String[] args) throws IOException {
-		System.out.println("using FileChannel...");
+		System.out.println("using FileChannel with charset decoding...");
 		
 		if (args.length < 3) return;
 		
@@ -124,6 +123,43 @@ public class TestSpeed {
 		if (numLines > 0) points = numLines;
 		
 		displayAvgSpeed(start_time, points);
+
+		fc.close();
+		fis.close();
+	}
+	
+	private static void readChannel2(final String[] args) throws IOException {
+		System.out.println("using FileChannel without charset decoding...");
+		
+		if (args.length < 4) return;
+		
+		final int bufferSize = Integer.parseInt(args[1]); // in Koctets
+		if (bufferSize <= 0) return;
+		
+		final int numLines = Integer.parseInt(args[2]);
+		if (numLines < 0) return;
+		
+		final String path = args[3];
+
+		final FileInputStream fis = new FileInputStream(path);
+		final FileChannel fc = fis.getChannel();
+		final ByteBuffer bb = ByteBuffer.allocate(1024*bufferSize);
+		final byte[] bytes = new byte[1024*bufferSize];
+		
+		final long start_time = System.nanoTime();
+
+		while (fc.read(bb) > 0) {
+			bb.flip();
+			
+			if (bytes.length > bb.limit())
+				bb.get(bytes, 0, bb.limit());
+			else
+				bb.get(bytes);
+
+			bb.clear();
+		}
+		
+		displayAvgSpeed(start_time, numLines);
 
 		fc.close();
 		fis.close();
