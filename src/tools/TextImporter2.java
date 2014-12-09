@@ -308,10 +308,10 @@ final class TextImporter2 {
 			if (isfloat) {
 				float fval = Float.parseFloat(value);
 				ivalue = Float.floatToRawIntBits(fval);
-				this.mtsIdx = (short) -this.mtsIdx;
+				this.mtsIdx = (short) -mtsIdx;
 			} else {
 				ivalue = Integer.parseInt(value);
-				this.mtsIdx = (short) this.mtsIdx;
+				this.mtsIdx = (short) mtsIdx;
 			}
 		}
 
