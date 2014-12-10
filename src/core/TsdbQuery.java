@@ -665,6 +665,7 @@ final class TsdbQuery implements Query {
     } while (tag != group_by);  // Stop when they both become null.
     // Skip any number of tags before the end.
     buf.append("(?:.{").append(tagsize).append("})*$");
+    LOG.info("regex filter: {}", buf.toString());
     scanner.setKeyRegexp(buf.toString(), CHARSET);
    }
 
@@ -750,14 +751,26 @@ final class TsdbQuery implements Query {
   private static void addId(final StringBuilder buf, final byte[] id) {
     boolean backslash = false;
     for (final byte b : id) {
-      buf.append((char) (b & 0xFF));
-      if (b == 'E' && backslash) {  // If we saw a `\' and now we have a `E'.
-        // So we just terminated the quoted section because we just added \E
-        // to `buf'.  So let's put a litteral \E now and start quoting again.
-        buf.append("\\\\E\\Q");
-      } else {
+//      buf.append((char) (b & 0xFF));
+//      if (b == 'E' && backslash) {  // If we saw a `\' and now we have a `E'.
+//        // So we just terminated the quoted section because we just added \E
+//        // to `buf'.  So let's put a litteral \E now and start quoting again.
+//        buf.append("\\\\E\\Q");
+//      } else {
+//        backslash = b == '\\';
+//      }
+      if (b == 0) { // embedded NULL byte terminates the PCRE pattern
+          // So replace it with the octal equivalent
+          buf.append("\\E\\000\\Q");
+        } else {
+          buf.append((char) (b & 0xFF));
+          if (b == 'E' && backslash) {  // If we saw a `\' and now we have a `E'.
+            // So we just terminated the quoted section because we just added \E
+            // to `buf'.  So let's put a litteral \E now and start quoting again.
+            buf.append("\\\\E\\Q");
+          }
+        }
         backslash = b == '\\';
-      }
     }
     buf.append("\\E");
   }
