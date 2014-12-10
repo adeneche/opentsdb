@@ -539,12 +539,14 @@ final class TsdbQuery implements Query {
     
     // set the metric UID based on the TSUIDs if given, or the metric UID
     if (tsuids != null && !tsuids.isEmpty()) {
+      LOG.debug("tsuids != null");
       final String tsuid = tsuids.get(0);
       final String metric_uid = tsuid.substring(0, TSDB.metrics_width() * 2);
       metric = UniqueId.stringToUid(metric_uid);
       System.arraycopy(metric, 0, start_row, 0, metric_width);
       System.arraycopy(metric, 0, end_row, 0, metric_width); 
     } else {
+      LOG.debug("tsuids == null");
       System.arraycopy(metric, 0, start_row, 0, metric_width);
       System.arraycopy(metric, 0, end_row, 0, metric_width);
     }
@@ -553,8 +555,10 @@ final class TsdbQuery implements Query {
     scanner.setStartKey(start_row);
     scanner.setStopKey(end_row);
     if (tsuids != null && !tsuids.isEmpty()) {
+      LOG.debug("createAndSetTSUIDFilter");
       createAndSetTSUIDFilter(scanner);
     } else if (tags.size() > 0 || group_bys != null) {
+        LOG.debug("createAndSetFilter");
       createAndSetFilter(scanner);
     }
     scanner.setFamily(TSDB.FAMILY);
