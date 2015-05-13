@@ -204,12 +204,17 @@ public class CachedBatches {
 		}
 
 		/**
-		 * Data comes in time order, and if the BASE we had doesn't match the current base we have
-		 * hit a new hour. It is time to persist the records, reset the baseTime and continue adding
+		 * Data comes in time order.  If the current based is advanced by one MAX_TIMESPAN over the
+		 * previous base then it is time to persist the records, reset the baseTime and continue adding
 		 * data points.
+		 *
+		 * This check is necessary because rebaseBatches assumes a base of currentTime.
+		 * However, while loading historical data, baseTime will be in the past.
+		 * The call from rebaseBatches will incorrectly determine that any batches
+		 * not at the current time must be rebased immediately.
 		 */
 		void persistIfNecessary(final long base) {
-			if (base != baseTime) {
+			if ((base - baseTime) == net.opentsdb.core.Const.MAX_TIMESPAN) {
 				dataPoints.persist();
 				baseTime = base;
 			}

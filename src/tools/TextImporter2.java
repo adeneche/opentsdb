@@ -59,7 +59,7 @@ final class TextImporter2 {
 		toScreen = argp.has("--print");
 
 		final long start_time = System.nanoTime();
-		int points = 0;
+		long points = 0;
 		// get a config object
 		TSDB tsdb = null;
 
@@ -89,7 +89,7 @@ final class TextImporter2 {
 		}
 	}
 
-	private static void displayAvgSpeed(final long start_time, final int points) {
+	private static void displayAvgSpeed(final long start_time, final long points) {
 		final double time_delta = (System.nanoTime() - start_time) / 1000000000.0;
 		LOG.info(String.format("Average speed: %d data points in %.3fs (%.1f points/s)",
 				points, time_delta, (points / time_delta)));
@@ -100,12 +100,12 @@ final class TextImporter2 {
 	 * @return number of points imported from file
 	 * @throws IOException
 	 */
-	private static int importFile(final TSDB tsdb, final String path) throws IOException {
+	private static long importFile(final TSDB tsdb, final String path) throws IOException {
 
 		final BufferedReader in = open(path);
 		String line = null;
 
-		int points = 0;
+		long points = 0;
 
 		final long start_time = System.nanoTime();
 		
