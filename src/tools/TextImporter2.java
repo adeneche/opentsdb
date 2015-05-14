@@ -63,6 +63,9 @@ final class TextImporter2 {
 		// get a config object
 		TSDB tsdb = null;
 
+		// disable RebaseBatches while importing 	
+		CachedBatches.setEnableRebaseBatches(false);		
+		
 		if (!argp.has("--noimport")) {
 			Config config = CliOptions.getConfig(argp);
 			argp = null;

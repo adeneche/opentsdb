@@ -32,10 +32,11 @@ public class CachedBatches {
 
 	private static final Map<String, Batch> batches = new ConcurrentHashMap<String, Batch>();
 	private static final Timer TIMER = new Timer(true);
+	private static boolean enableRebaseBatches = true;
 	private static final TimerTask TIMER_TASK = new TimerTask() {
 		@Override
 		public void run() {
-			rebaseBatches();
+			if (CachedBatches.enableRebaseBatches) rebaseBatches();
 		}
 	};
 
@@ -51,6 +52,14 @@ public class CachedBatches {
 	 * There should be no WAY to create instances of this.
 	 */
 	private CachedBatches() {
+	}
+
+	/**
+	* Disable rebaseBatches if loading historical data not near currentTime
+	*/
+	public static void setEnableRebaseBatches(boolean b) {
+		LOG.info("Rebase Batches: " + b);
+		CachedBatches.enableRebaseBatches = b;
 	}
 
 	public static Deferred<Object> addPoint(final TSDB tsdb, final String metric, final long timestamp, final String value, final Map<String, String> tags) {
@@ -204,17 +213,12 @@ public class CachedBatches {
 		}
 
 		/**
-		 * Data comes in time order.  If the current based is advanced by one MAX_TIMESPAN over the
-		 * previous base then it is time to persist the records, reset the baseTime and continue adding
+		 * Data comes in time order, and if the BASE we had doesn't match the current base we have
+		 * hit a new hour. It is time to persist the records, reset the baseTime and continue adding
 		 * data points.
-		 *
-		 * This check is necessary because rebaseBatches assumes a base of currentTime.
-		 * However, while loading historical data, baseTime will be in the past.
-		 * The call from rebaseBatches will incorrectly determine that any batches
-		 * not at the current time must be rebased immediately.
 		 */
 		void persistIfNecessary(final long base) {
-			if ((base - baseTime) == net.opentsdb.core.Const.MAX_TIMESPAN) {
+			if (base != baseTime) {
 				dataPoints.persist();
 				baseTime = base;
 			}
