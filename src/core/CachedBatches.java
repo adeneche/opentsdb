@@ -32,10 +32,11 @@ public class CachedBatches {
 
 	private static final Map<String, Batch> batches = new ConcurrentHashMap<String, Batch>();
 	private static final Timer TIMER = new Timer(true);
+	private static boolean enableRebaseBatches = true;
 	private static final TimerTask TIMER_TASK = new TimerTask() {
 		@Override
 		public void run() {
-			rebaseBatches();
+			if (CachedBatches.enableRebaseBatches) rebaseBatches();
 		}
 	};
 
@@ -51,6 +52,14 @@ public class CachedBatches {
 	 * There should be no WAY to create instances of this.
 	 */
 	private CachedBatches() {
+	}
+
+	/**
+	* Disable rebaseBatches if loading historical data not near currentTime
+	*/
+	public static void setEnableRebaseBatches(boolean b) {
+		LOG.info("Rebase Batches: " + b);
+		CachedBatches.enableRebaseBatches = b;
 	}
 
 	public static Deferred<Object> addPoint(final TSDB tsdb, final String metric, final long timestamp, final String value, final Map<String, String> tags) {

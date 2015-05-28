@@ -61,7 +61,7 @@ final class BatchedDataPoints implements WritableDataPoints {
 	/**
 	 * Storage of the compacted value.
 	 */
-	private byte[] batchedValue = new byte[Const.MAX_TIMESPAN * 8];
+	private byte[] batchedValue = new byte[Const.MAX_TIMESPAN * 8 + 1];
 
 	/**
 	 * Track the index position where the next qualifier gets written.
@@ -120,6 +120,11 @@ final class BatchedDataPoints implements WritableDataPoints {
 		lastTimestamp = Long.MIN_VALUE;
 	}
 
+	private void appendValueMetaData(byte isMixedCompact) {
+		batchedValue[valueIndex] = isMixedCompact;
+		valueIndex += 1;
+	}
+
 	/**
 	 * A copy of the values is created and sent with a put request. A reset is initialized which
 	 * makes this data structure ready to be reused for the same metric and tags but for a different
@@ -129,6 +134,7 @@ final class BatchedDataPoints implements WritableDataPoints {
 	 */
 	@Override
 	public Deferred<Object> persist() {
+		appendValueMetaData((byte)0); // assume not mixed for now, FIXME
 		final byte[] q = Arrays.copyOfRange(batchedQualifier, 0, qualifierIndex);
 		final byte[] v = Arrays.copyOfRange(batchedValue, 0, valueIndex);
 		final byte[] r = Arrays.copyOfRange(rowKey, 0, rowKey.length);
